@@ -1132,6 +1132,6 @@ impl App {
                 }
             };
         }
-        " n:new  d:del  e:edit  c:color  b:border  t:tag  ←/→:navigate  T:filter  /:search  O:overlay  ?:help  ^R:theme  q:quit"
+        " n:new  d:del  e:edit  c:color  b:border  ←/→:navigate  T:filter  /:search  O:overlay  ?:help  ^R:theme  q:quit"
     }
 }

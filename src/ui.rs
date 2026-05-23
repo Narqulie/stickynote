@@ -676,7 +676,7 @@ fn render_menu(app: &App, frame: &mut Frame, _theme: &Theme) {
 
 // ── Help overlay ──────────────────────────────────────────────────────────────
 
-fn render_help(frame: &mut Frame, area: Rect, _theme: &Theme) {
+fn render_help(frame: &mut Frame, area: Rect, theme: &Theme) {
     let w = area.width;
 
     let lines = [
@@ -718,14 +718,21 @@ fn render_help(frame: &mut Frame, area: Rect, _theme: &Theme) {
 
     let start_x = (w.saturating_sub(box_w)) / 2;
     let start_y = (area.height.saturating_sub(box_h)) / 4;
+    let help_rect = Rect::new(start_x, start_y, box_w, box_h);
+
+    // Clear the area behind the help overlay so underlying content doesn't bleed through.
+    frame.render_widget(Clear, help_rect);
 
     let block = Block::bordered()
         .border_type(BorderType::Double)
-        .border_style(Style::new().fg(Color::Rgb(0xaa, 0xaa, 0xaa)))
+        .border_style(Style::new().fg(theme.sel_border))
+        .style(Style::new().bg(theme.hint_bg))
         .padding(ratatui::widgets::Padding::horizontal(2));
 
-    let par = Paragraph::new(content).block(block);
-    frame.render_widget(par, Rect::new(start_x, start_y, box_w, box_h));
+    let par = Paragraph::new(content)
+        .block(block)
+        .style(Style::new().fg(theme.status_fg));
+    frame.render_widget(par, help_rect);
 }
 
 // ── Footer ────────────────────────────────────────────────────────────────────

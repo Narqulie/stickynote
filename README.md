@@ -6,123 +6,29 @@ I wanted a place to dump thoughts without leaving the terminal — no browser ta
 
 ## What it looks like
 
-Here's a board with a handful of notes — the tab bar at the top, a full note card in the middle, and a footer at the bottom:
+![Main board with several notes in different colours](screenshots/1.png)
 
-```
- ┌─ # Sprint tasks ─── ● Errands ─── ● Menu planning ─── # Meeting notes ─── # Idea ─┐
- │                                                                                    │
- │                                Meeting notes                                        │
- │ ────────────────────────────────────────────────────────────────────────────────── │
- │                                                                                    │
- │  Room 204 at 3:30 — bring laptop and notebook                                      │
- │  Agenda:                                                                           │
- │  1. Q2 roadmap review                                                              │
- │  2. Hiring update                                                                  │
- │  3. Architecture decisions                                                         │
- │                                                                                    │
- │ ────────────────────────────────────────────────────────────────────────────────── │
- │                                                          [work]                    │
- ╰────────────────────────────────────────────────────────────────────────────────────╯
- ● dark │ 4/6 │ purple │ rounded │ EDITING
- n:new  d:del  e:edit  c:color  b:border  t:tag  ←/→:navigate  T:filter  /:search  ?:help  q:quit
-```
+A board with a handful of notes — the tab bar at the top, a full note card in the middle, status and hint bars at the bottom.
 
-**Edit mode** gives each section its own focus and cursor. Tab cycles between Header → Content → Tags:
+![Editing a note with Header focus](screenshots/2.png)
 
-```
- ┌─ # Sprint tasks ─── ● Errands ─── ● Menu planning ─── ┌─ # Meeting notes ────────┐ │
- │                                                        │                          │ │
- │                         ┌────────────────────────────┐ │  Room 204 at 3:30 —▋     │ │
- │                         │     Meeting notes▋         │ │  Agenda:                 │ │
- │                         └────────────────────────────┘ │  1. Q2 roadmap review    │ │
- │ ────────────────────────────────────────────────────── │  2. Hiring update        │ │
- │                                                        │                          │ │
- │  Room 204 at 3:30 — bring laptop and notebook          │                          │ │
- │  Agenda:                                               │                          │ │
- │  1. Q2 roadmap review                                  │                          │ │
- │  2. Hiring update                                      │                          │ │
- │  3. Architecture decisions                             │                          │ │
- │                                                        │                          │ │
- │ ───────────────────────────────────────────────────────│                          │ │
- │                                   [work]  ▋            │                          │ │
- ╰────────────────────────────────────────────────────────╯──────────────────────────╯
- Esc:stop  Tab:content  Backspace:delete  [type title]
-```
+Edit mode gives each section its own focus and cursor. Tab cycles between Header → Content → Tags. The focused section gets a thin border around it.
 
-**Tags** autocomplete as you type, pulling from every tag already on the board:
+![Tag autocomplete popup while typing a tag](screenshots/3.png)
 
-```
- ┌─ # Sprint tasks ─── ● Errands ─── ● Menu ─── # Meeting notes ─── # Idea ─── # Dev ┐
- │                                                                                    │
- │                                Sprint tasks                                         │
- │ ────────────────────────────────────────────────────────────────────────────────── │
- │  - Rewrite auth middleware                                                         │
- │  - Add rate limiting with token bucket          ┌ autocomplete ──────────────────┐ │
- │  - Write integration tests for user             │   todo                         │ │
- │  - Review PRs for billing module                │   work                         │ │
- │                                                 │   setup                        │ │
- │ ────────────────────────────────────────────────│   idea                         │ │
- │          [work]  [urgent]  ur▋                  └────────────────────────────────┘ │
- ╰────────────────────────────────────────────────────────────────────────────────────╯
- Esc:stop  Tab:header  Enter:add  ←/→:select tag  Backspace:del  [type tag name]
-```
+Tags autocomplete as you type, pulling from every tag already on the board. Tab fills the highlighted suggestion, Enter commits it.
 
-**Overlay mode** (`O`) drops a note full-screen when you need focus:
+![Full-screen overlay editing](screenshots/4.png)
 
-```
- ╔════════════════════════════════════════════════════════════════════════════════════╗
- ║                                                                                    ║
- ║                              Menu planning                                         ║
- ║ ────────────────────────────────────────────────────────────────────────────────── ║
- ║                                                                                    ║
- ║  **Dinner party Saturday**                                                         ║
- ║                                                                                    ║
- ║  Guests: Sarah, Mike, Jess, Tom                                                    ║
- ║                                                                                    ║
- ║  Menu ideas:                                                                       ║
- ║  - Grilled salmon with dill                                                        ║
- ║  - Roasted vegetables                                                              ║
- ║  - Tiramisu                                                                        ║
- ║                                                                                    ║
- ║  Wine: Pinot Noir                                                                  ║
- ║                                                                                    ║
- ║ ────────────────────────────────────────────────────────────────────────────────── ║
- ║                                                   [personal]                       ║
- ╚════════════════════════════════════════════════════════════════════════════════════╝
- Esc:close
- Tab:focus  Enter:newline  Backspace:delete  ←/→:move cursor
-```
+Overlay mode (`O`) drops the selected note full-screen when you need focus.
 
-**Help** (`?`) keeps a reference handy:
+![Help overlay showing all key bindings](screenshots/5.png)
 
-```
- ╔══════════════════════════════════════════╗
- ║  Stickynote  --  Key Bindings           ║
- ║                                         ║
- ║  n        New note                      ║
- ║  ^d       Duplicate note                ║
- ║  e/enter  Toggle edit mode              ║
- ║  d        Delete (confirm)              ║
- ║  c        Cycle colour                  ║
- ║  b        Cycle border style            ║
- ║  t        Add tag                       ║
- ║  ^t       Clear all tags (confirm)      ║
- ║  T        Toggle tag filter             ║
- ║  /        Filter by tag                 ║
- ║  O        Overlay view                  ║
- ║  ←/→      Navigate tabs                 ║
- ║  ?        Toggle this help              ║
- ║  ^R       Cycle theme                  ║
- ║  esc      Cancel / close                ║
- ║  q        Quit                          ║
- ║                                         ║
- ║  Click tab       Select note            ║
- ║  Double-click    Select + edit          ║
- ║  Right-click     Context menu           ║
- ║  Middle-click    Delete note            ║
- ║  Scroll wheel    Navigate tabs          ║
- ╚══════════════════════════════════════════╝
-```
+Help (`?`) keeps a keyboard reference handy, themed to match whatever colour scheme is active.
+
+![Right-click context menu on a note tab](screenshots/6.png)
+
+Right-click a tab for quick actions: edit, change colour or border, add a tag, duplicate, or delete.
 
 ## Install
 

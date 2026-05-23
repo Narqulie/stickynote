@@ -1,5 +1,8 @@
 # Rust build
 target/
 
+# macOS
+.DS_Store
+
 # user data
 .stickynote/
