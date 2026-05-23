@@ -53,7 +53,7 @@ pub fn render(app: &App, frame: &mut Frame) {
             let input = note.tag_input.to_lowercase();
             app.all_tags
                 .iter()
-                .filter(|t| t.to_lowercase().contains(&input) && !note.has_tag(t))
+                .filter(|t| t.to_lowercase().contains(&input))
                 .take(5)
                 .map(|s| s.as_str())
                 .collect()
