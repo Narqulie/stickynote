@@ -440,11 +440,13 @@ fn render_full_note(
 
     // ── Autocomplete popup (above tags, overlaying content) ─────────────────────
     if tag_focused && !tag_suggestions.is_empty() && tags_section_h > 0 {
-        let max_popup_h = tags_sep_y.saturating_sub(body_rect.y).min(5);
-        let popup_h = (tag_suggestions.len() as u16).min(max_popup_h);
-        if popup_h > 0 {
+        // Each suggestion = 1 row, plus 2 for the border (top + bottom).
+        let max_popup_h = tags_sep_y.saturating_sub(body_rect.y).min(6);
+        let popup_h = ((tag_suggestions.len() as u16) + 2).min(max_popup_h);
+        if popup_h >= 3 {
+            let content_rows = (popup_h - 2) as usize;
             let popup_rect = Rect::new(inner_x, tags_sep_y - popup_h, inner_w, popup_h);
-            let visible_suggestions = &tag_suggestions[..popup_h as usize];
+            let visible_suggestions = &tag_suggestions[..tag_suggestions.len().min(content_rows)];
 
             let suggestion_lines: Vec<Line> = visible_suggestions
                 .iter()
