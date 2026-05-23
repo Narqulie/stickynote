@@ -509,6 +509,22 @@ impl App {
                 return;
             }
             "tab" => {
+                // In Tags focus with matching suggestions: autofill.
+                if self.edit_focus == EditFocus::Tags {
+                    let input = self.notes[self.selected].tag_input.to_lowercase();
+                    if !input.is_empty()
+                        && let Some(matched) = self
+                            .all_tags
+                            .iter()
+                            .find(|t| t.to_lowercase().contains(&input))
+                            .cloned()
+                    {
+                        self.notes[self.selected].tag_input = matched;
+                        self.notes[self.selected].tag_cursor = None;
+                        self.mark_dirty();
+                        return;
+                    }
+                }
                 self.edit_focus = next_focus(self.edit_focus);
                 return;
             }
