@@ -17,11 +17,11 @@ No tests in `app.rs` or `ui.rs` (immediate-mode rendering requires TTY).
 
 | File | Role |
 |------|------|
-| `main.rs` | Entry point, `ratatui::init/restore`, crossterm mouse capture, event loop (poll 50ms), debounced auto-save (200ms) |
+| `main.rs` | Entry point, clap `Cli` struct (`--board`/`-b`, `--theme`/`-t`), `ratatui::init/restore`, crossterm mouse capture, event loop (poll 50ms), debounced auto-save (200ms) |
 | `app.rs` | `App` struct + keyboard/mouse dispatch, note ops, tab-navigable editing (Header/Content/Tags), delete + clear-tags confirmation, context menu, double-click (350ms), input modes |
 | `note.rs` | `Note` struct (content, title, tags, color, border, editing state, cursor/title_cursor/tag_input/tag_cursor), `Theme`, 10 colour hexes/names, 5 border styles, `parse_md()` / `strip_md()` |
 | `ui.rs` | `render()` — single-line tab bar (1 row), full note with Header/Content/Tags sections + separators, per-section focus borders, autocomplete popup, overlay, context menu, help, welcome, 2-line footer |
-| `persistence.rs` | `SaveData`/`SavedNote` with serde, `~/.stickynote/board.json`, graceful on missing/corrupt, field validation on load |
+| `persistence.rs` | `SaveData`/`SavedNote` with serde, `~/.stickynote/board.json`, `load_board_from()` / `save_board()` accept custom paths, graceful on missing/corrupt, field validation on load |
 
 ### Critical Design Details
 
@@ -111,7 +111,6 @@ No tests in `app.rs` or `ui.rs` (immediate-mode rendering requires TTY).
 
 ## Gotchas
 
-- **README.md** is stale — still documents `f` keybinding for font cycling (removed). Update README if regenerating docs.
 - **`font_style` field is dead UI code** — stored/loaded from JSON for backward compat, but no way to change it from UI. Keep field in struct/tests/persistence.
 - **No `#[derive(Default)]`** anywhere — all defaults explicit in `Note::new()` and `App::new()`.
 - **Edition 2024** (`edition = "2024"` in Cargo.toml) — requires Rust 1.85+. Changes let-chain syntax to `if let` without `&&` prefix.
@@ -119,3 +118,9 @@ No tests in `app.rs` or `ui.rs` (immediate-mode rendering requires TTY).
 - **Shift+Tab requires `KeyCode::BackTab`** — crossterm sends `BackTab` (not `Tab+SHIFT`) for Shift+Tab.
 - **Tab bar vs peek stack**: The old peek stack (2 rows/note) has been replaced with a single-line tab bar. All references to "peek" are outdated.
 - **Click to edit must use `toggle_edit()`** — not manual `note.editing = !note.editing`. `toggle_edit()` also resets `title_cursor`, `tag_input`, and `edit_focus`.
+- **Custom board paths**: `App.board_path: Option<PathBuf>` stores the CLI `--board` flag. `load_board_from(&Path)` and `save_board(data, custom_path: Option<&PathBuf>)` accept custom paths. The `save_board()` function resolves custom vs default internally; callers pass `app.board_path.as_ref()`.
+- **Autocomplete popup height**: `popup_h = (suggestions.len() + 2).min(max)` — the `+2` accounts for `Block::bordered()` top/bottom rows. If the popup block is changed to unbordered, remove the +2. Guard `popup_h >= 3` ensures at least one content row is visible.
+- **Autocomplete filter**: The suggestion filter was once `.filter(|t| !note.has_tag(t))` which hid tags already on the note. This was removed — now ALL matching global tags are shown; duplicate prevention happens at Enter-commit time. Do not re-add the exclusion filter.
+- **Tab-to-autofill**: When Tags focus is active and `tag_input` has a partial match against `all_tags`, Tab fills `tag_input` with the first matching tag (instead of cycling focus to Header). Uses `.cloned()` on the iterator to avoid borrow conflicts between `self.all_tags` (immutable ref) and `self.notes` (mutable). Tab only cycles focus when there's no match.
+- **Help overlay (`render_help`)**: Must call `frame.render_widget(Clear, ...)` on the help rect BEFORE rendering the paragraph, or the underlying note card bleeds through. The block must have `.style(Style::new().bg(theme.hint_bg))` for a solid background. Theme is NOT `_theme` — it's actively used.
+- **`t:tag` removed from footer hint bar**: The `t` keybinding still works for adding tags, but `t:tag` was intentionally removed from the default hint bar string in `App::hint_bar()`. Do not add it back.
