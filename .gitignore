@@ -1,0 +1,5 @@
+# Rust build
+target/
+
+# user data
+.stickynote/

@@ -1,0 +1,53 @@
+{
+  "notes": [
+    {
+      "content": "Pick up dry cleaning before 5pm\nRemember to grab the blue jacket too",
+      "title": "Errands",
+      "color": "#ffcc99",
+      "font_style": "normal",
+      "border_style": "rounded",
+      "tags": ["todo"]
+    },
+    {
+      "content": "- Rewrite auth middleware\n- Add rate limiting with token bucket\n- Write integration tests for user onboarding flow\n- Review PRs for billing module",
+      "title": "Sprint tasks",
+      "color": "#a8d8ea",
+      "font_style": "normal",
+      "border_style": "double",
+      "tags": ["work", "urgent"]
+    },
+    {
+      "content": "**Dinner party Saturday**\n\nGuests: Sarah, Mike, Jess, Tom\n\nMenu ideas:\n- Grilled salmon with dill\n- Roasted vegetables\n- Tiramisu\n\nWine: Pinot Noir",
+      "title": "Menu planning",
+      "color": "#ffb3ba",
+      "font_style": "normal",
+      "border_style": "thick",
+      "tags": ["personal"]
+    },
+    {
+      "content": "Room 204 at 3:30 — bring laptop and notebook\nAgenda:\n1. Q2 roadmap review\n2. Hiring update\n3. Architecture decisions",
+      "title": "Meeting notes",
+      "color": "#c9b1ff",
+      "font_style": "normal",
+      "border_style": "rounded",
+      "tags": ["work"]
+    },
+    {
+      "content": "Idea: ratatui-based kanban board with terminal mouse support\nCould be a follow-up to stickynote\n\nCheck if anyone's done it yet on crates.io",
+      "title": "Project idea",
+      "color": "#ffe066",
+      "font_style": "normal",
+      "border_style": "none",
+      "tags": ["idea"]
+    },
+    {
+      "content": "docker-compose up -d\ncargo watch -x test\n# Check that postgres port isn't already in use",
+      "title": "Dev setup",
+      "color": "#7ec8e3",
+      "font_style": "normal",
+      "border_style": "rounded",
+      "tags": ["work", "setup"]
+    }
+  ],
+  "theme_idx": 0
+}
