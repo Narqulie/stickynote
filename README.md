@@ -12,7 +12,7 @@ A board with a handful of notes — the tab bar at the top, a full note card in 
 
 ![Editing a note with Header focus](screenshots/2.png)
 
-Edit mode gives each section its own focus and cursor. Tab cycles between Header → Content → Tags. The focused section gets a thin border around it.
+Edit mode gives each section its own focus and cursor. Tab cycles between Header → Content → Tags. The focused section gets a thick black border; single-line sections expand to fit top/bottom borders.
 
 ![Tag autocomplete popup while typing a tag](screenshots/3.png)
 

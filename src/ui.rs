@@ -211,7 +211,7 @@ fn render_full_note(
     };
 
     let border_fg = if note.editing {
-        theme.sel_border
+        Color::Rgb(0, 0, 0)
     } else if note.border_style == "hidden" && !note.editing {
         bg
     } else {
@@ -242,7 +242,7 @@ fn render_full_note(
     let header_display = if has_title {
         let title_with_cursor = if header_focused {
             let mut t = note.title.clone();
-            t.insert(note.title_cursor, '▋');
+            t.insert(note.title_cursor, '█');
             t
         } else {
             note.title.clone()
@@ -264,7 +264,7 @@ fn render_full_note(
                     .skip(offset)
                     .take(max.saturating_sub(1))
                     .collect();
-                format!("{}▋", tail)
+                format!("{}█", tail)
             } else {
                 let max_show = max.saturating_sub(1);
                 format!("{}…", &title_with_cursor[..max_show])
@@ -296,8 +296,8 @@ fn render_full_note(
     // ── Layout with next_y tracking ─────────────────────────────────────────────
     let bg_style = Style::new().bg(bg);
 
-    // Focused section gets a highlighted separator line in sel_border colour.
-    let focus_sep = Style::new().fg(theme.sel_border);
+    // Focused section gets a highlighted separator line in black.
+    let focus_sep = Style::new().fg(Color::Rgb(0, 0, 0));
     let content_focused = note.editing && !header_focused && !tag_focused;
     let sep_header = if content_focused {
         focus_sep
@@ -339,12 +339,18 @@ fn render_full_note(
     // 5. Tags line
     let tags_rect = Rect::new(inner_x, next_y, inner_w, 1);
 
-    // ── Focus border (per-section) ────────────────────────────────────────────
-    let focus_block = Block::bordered()
-        .border_type(BorderType::Plain)
-        .border_style(Style::new().fg(fg));
-
-    let inset_w = inner_w.saturating_sub(2); // width inside focus border
+    // ── Focus bordered block (thick black border on all 4 sides) ─────────────
+    // Single-line sections (header, tags) expand 1 row above & below so the
+    // block has room for top/bottom borders. Separators are absorbed into the
+    // border lines and skipped when adjacent sections are focused.
+    let focus_border = Style::new().fg(Color::Rgb(0, 0, 0));
+    let focus_block = || {
+        Block::bordered()
+            .border_type(BorderType::Thick)
+            .border_style(focus_border)
+            .style(bg_style)
+    };
+    let inset_w = inner_w.saturating_sub(2);
     let header_render = if header_focused {
         Rect::new(inner_x + 1, inner_y, inset_w, 1)
     } else {
@@ -383,17 +389,43 @@ fn render_full_note(
 
     // ── Render ──────────────────────────────────────────────────────────────────
     if note.border_style == "hidden" && !note.editing {
-        frame.render_widget(Paragraph::new(header_line).style(bg_style), header_render);
-        frame.render_widget(
-            Paragraph::new(header_sep_line.clone()),
-            Rect::new(inner_x, header_sep_y, inner_w, 1),
-        );
-        frame.render_widget(Paragraph::new(body_lines).style(bg_style), body_render);
-        if tags_section_h > 0 {
+        // ── Header ───────
+        if header_focused {
             frame.render_widget(
-                Paragraph::new(tags_sep_line.clone()),
-                Rect::new(inner_x, tags_sep_y, inner_w, 1),
+                focus_block(),
+                Rect::new(inner_x, inner_y.saturating_sub(1), inner_w, 3),
             );
+        }
+        frame.render_widget(Paragraph::new(header_line).style(bg_style), header_render);
+        // ── Header separator (skipped when adjacent section focused) ──
+        if !header_focused && !content_focused {
+            frame.render_widget(
+                Paragraph::new(header_sep_line.clone()),
+                Rect::new(inner_x, header_sep_y, inner_w, 1),
+            );
+        }
+        // ── Body ───────
+        if content_focused {
+            frame.render_widget(
+                focus_block(),
+                Rect::new(inner_x, header_sep_y, inner_w, body_h + 2),
+            );
+        }
+        frame.render_widget(Paragraph::new(body_lines).style(bg_style), body_render);
+        // ── Tags ───────
+        if tags_section_h > 0 {
+            if !content_focused && !tag_focused {
+                frame.render_widget(
+                    Paragraph::new(tags_sep_line.clone()),
+                    Rect::new(inner_x, tags_sep_y, inner_w, 1),
+                );
+            }
+            if tag_focused {
+                frame.render_widget(
+                    focus_block(),
+                    Rect::new(inner_x, tags_sep_y, inner_w, 3),
+                );
+            }
             render_tags_chips(
                 note,
                 tag_focused,
@@ -411,28 +443,43 @@ fn render_full_note(
             .style(bg_style);
         frame.render_widget(&block, rect);
 
-        // ── Per-section focus borders ───────────────────
+        // ── Header ───────
         if header_focused {
-            frame.render_widget(&focus_block, header_rect);
-        }
-        if content_focused {
-            frame.render_widget(&focus_block, body_rect);
-        }
-        if tag_focused {
-            frame.render_widget(&focus_block, tags_rect);
-        }
-
-        frame.render_widget(Paragraph::new(header_line).style(bg_style), header_render);
-        frame.render_widget(
-            Paragraph::new(header_sep_line.clone()),
-            Rect::new(inner_x, header_sep_y, inner_w, 1),
-        );
-        frame.render_widget(Paragraph::new(body_lines).style(bg_style), body_render);
-        if tags_section_h > 0 {
             frame.render_widget(
-                Paragraph::new(tags_sep_line.clone()),
-                Rect::new(inner_x, tags_sep_y, inner_w, 1),
+                focus_block(),
+                Rect::new(inner_x, inner_y.saturating_sub(1), inner_w, 3),
             );
+        }
+        frame.render_widget(Paragraph::new(header_line).style(bg_style), header_render);
+        // ── Header separator (skipped when adjacent section focused) ──
+        if !header_focused && !content_focused {
+            frame.render_widget(
+                Paragraph::new(header_sep_line.clone()),
+                Rect::new(inner_x, header_sep_y, inner_w, 1),
+            );
+        }
+        // ── Body ───────
+        if content_focused {
+            frame.render_widget(
+                focus_block(),
+                Rect::new(inner_x, header_sep_y, inner_w, body_h + 2),
+            );
+        }
+        frame.render_widget(Paragraph::new(body_lines).style(bg_style), body_render);
+        // ── Tags ───────
+        if tags_section_h > 0 {
+            if !content_focused && !tag_focused {
+                frame.render_widget(
+                    Paragraph::new(tags_sep_line.clone()),
+                    Rect::new(inner_x, tags_sep_y, inner_w, 1),
+                );
+            }
+            if tag_focused {
+                frame.render_widget(
+                    focus_block(),
+                    Rect::new(inner_x, tags_sep_y, inner_w, 3),
+                );
+            }
             render_tags_chips(
                 note,
                 tag_focused,
@@ -525,7 +572,7 @@ fn render_tags_chips(
     if tag_focused || !note.tag_input.is_empty() {
         let show_cursor = tag_focused && note.tag_cursor.is_none();
         let input_text = if show_cursor {
-            format!("{}▋", note.tag_input)
+            format!("{}█", note.tag_input)
         } else {
             note.tag_input.clone()
         };

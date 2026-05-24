@@ -100,12 +100,12 @@ impl Note {
         self.content.lines().next().unwrap_or("")
     }
 
-    /// Split content into lines, inserting a `|` cursor marker when editing.
+    /// Split content into lines, inserting a `█` cursor marker when editing.
     pub fn content_lines(&self) -> Vec<String> {
         let display = if self.editing {
             let pos = self.cursor.min(self.content.len());
             let mut s = self.content.clone();
-            s.insert(pos, '|');
+            s.insert(pos, '█');
             s
         } else {
             self.content.clone()
@@ -389,7 +389,7 @@ mod tests {
             ..Note::new()
         };
         let lines = n.content_lines();
-        assert_eq!(lines[0], "hel|lo");
+        assert_eq!(lines[0], "hel█lo");
     }
 
     #[test]
@@ -401,7 +401,7 @@ mod tests {
             ..Note::new()
         };
         let lines = n.content_lines();
-        assert_eq!(lines[0], "hi|");
+        assert_eq!(lines[0], "hi█");
     }
 
     #[test]
@@ -413,7 +413,7 @@ mod tests {
             ..Note::new()
         };
         let lines = n.content_lines();
-        assert_eq!(lines[0], "ab|");
+        assert_eq!(lines[0], "ab█");
     }
 
     #[test]
