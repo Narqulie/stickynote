@@ -94,9 +94,16 @@ fn run_app(terminal: &mut DefaultTerminal, app: &mut app::App) -> io::Result<()>
         // Debounced auto-save: write to disk if dirty and enough time has passed.
         if app.dirty && app.last_save.elapsed() >= save_threshold {
             let data = app.to_save_data();
-            persistence::save_board(&data, app.board_path.as_ref());
-            app.dirty = false;
-            app.last_save = std::time::Instant::now();
+            match persistence::save_board(&data, app.board_path.as_ref()) {
+                Ok(()) => {
+                    app.dirty = false;
+                    app.last_save = std::time::Instant::now();
+                    app.save_error.clear();
+                }
+                Err(e) => {
+                    app.save_error = e;
+                }
+            }
         }
     }
 

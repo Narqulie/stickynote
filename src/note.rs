@@ -6,6 +6,7 @@ use ratatui::text::Span;
 
 // ── Themes ────────────────────────────────────────────────────────────────────
 
+/// A colour theme defining the palette for status bars, borders, and hints.
 pub struct Theme {
     pub name: &'static str,
     pub status_bg: Color,
@@ -58,6 +59,7 @@ pub const BORDER_STYLES: [&str; 5] = ["rounded", "double", "thick", "hidden", "n
 // ── Note ──────────────────────────────────────────────────────────────────────
 
 /// A single sticky note with content, styling, tags, and editing state.
+/// Transient fields (`cursor`, `title_cursor`, `tag_input`, `tag_cursor`) are not persisted.
 #[derive(Debug, Clone)]
 pub struct Note {
     pub content: String,
@@ -76,6 +78,7 @@ pub struct Note {
 }
 
 impl Note {
+    /// Create a new empty note with default colour, border, and font style.
     pub fn new() -> Self {
         Note {
             content: String::new(),
@@ -92,12 +95,12 @@ impl Note {
         }
     }
 
-    /// First line of content (everything before first `\n`).
+    /// First line of content (everything before the first `\n`).
     pub fn first_line(&self) -> &str {
         self.content.lines().next().unwrap_or("")
     }
 
-    /// Split content into lines, inserting the cursor `|` if editing.
+    /// Split content into lines, inserting a `|` cursor marker when editing.
     pub fn content_lines(&self) -> Vec<String> {
         let display = if self.editing {
             let pos = self.cursor.min(self.content.len());
@@ -110,19 +113,19 @@ impl Note {
         display.lines().map(|l| l.to_string()).collect()
     }
 
-    /// Check if note has a specific tag (case-insensitive).
+    /// Check if the note has a specific tag (case-insensitive).
     pub fn has_tag(&self, tag: &str) -> bool {
         let lower = tag.to_lowercase();
         self.tags.iter().any(|t| t.to_lowercase() == lower)
     }
 
-    /// Normalize a tag string to canonical form (lowercased, trimmed).
+    /// Normalize a raw tag string to canonical form (lowercased, trimmed).
     pub fn normalize_tag(raw: &str) -> String {
         raw.trim().to_lowercase()
     }
 
-    /// Return the (line_index, column) of the cursor in the content string.
-    /// Both are 0-based. `line_index` counts `\n`-separated lines.
+    /// Return the (line_index, column) of the content cursor.
+    /// Both are 0-based; `line_index` counts `\n`-separated lines.
     pub fn cursor_pos(&self) -> (usize, usize) {
         let pos = self.cursor.min(self.content.len());
         let before = &self.content[..pos];
@@ -132,8 +135,8 @@ impl Note {
         (lines_before, col)
     }
 
-    /// Return the flat byte position for a given (line_index, column),
-    /// clamping column to the line length.
+    /// Convert a (line_index, column) pair back to a flat byte position.
+    /// Column is clamped to the line length.
     pub fn pos_to_cursor(&self, line_idx: usize, col: usize) -> usize {
         let mut pos = 0usize;
         for (i, line) in self.content.split('\n').enumerate() {
@@ -260,8 +263,7 @@ fn try_md_capture<'a>(
 }
 
 /// Strip Markdown syntax delimiters from `text`, returning plain text.
-/// Useful for peek previews where formatting markers would look cluttered.
-#[allow(dead_code)]
+/// Useful for tab previews where formatting markers would look cluttered.
 pub fn strip_md(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut remaining = text;

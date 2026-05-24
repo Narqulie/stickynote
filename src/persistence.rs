@@ -9,12 +9,14 @@ use crate::note::{BORDER_STYLES, NOTE_COLORS, Note};
 
 // ── JSON types ────────────────────────────────────────────────────────────────
 
+/// Top-level serialisable board state.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SaveData {
     pub notes: Vec<SavedNote>,
     pub theme_idx: usize,
 }
 
+/// On-disk representation of a single note (transient editing state excluded).
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SavedNote {
     pub content: String,
@@ -28,6 +30,7 @@ pub struct SavedNote {
 
 // ── Path ──────────────────────────────────────────────────────────────────────
 
+/// Default board file path: `~/.stickynote/board.json`.
 pub fn board_path() -> PathBuf {
     let home = dirs::home_dir().expect("could not determine home directory");
     home.join(".stickynote").join("board.json")
@@ -35,10 +38,12 @@ pub fn board_path() -> PathBuf {
 
 // ── Load ──────────────────────────────────────────────────────────────────────
 
+/// Load board state from the default path, returning an empty board on error.
 pub fn load_board() -> SaveData {
     load_board_from(&board_path())
 }
 
+/// Load board state from a custom path, returning an empty board on error.
 pub fn load_board_from(path: &Path) -> SaveData {
     if !path.exists() {
         return SaveData {
@@ -66,23 +71,25 @@ pub fn load_board_from(path: &Path) -> SaveData {
 
 // ── Save ──────────────────────────────────────────────────────────────────────
 
-pub fn save_board(data: &SaveData, custom_path: Option<&PathBuf>) {
+/// Save board state to disk, using a custom path or the default.
+/// Returns an error string if writing fails.
+pub fn save_board(data: &SaveData, custom_path: Option<&PathBuf>) -> Result<(), String> {
     let default = board_path();
     let path: &Path = custom_path
         .map(|p| p.as_path())
         .unwrap_or_else(|| default.as_path());
-    save_board_at(data, path);
+    save_board_at(data, path)
 }
 
-fn save_board_at(data: &SaveData, path: &Path) {
+fn save_board_at(data: &SaveData, path: &Path) -> Result<(), String> {
     if let Some(parent) = path.parent()
         && !parent.exists()
     {
-        let _ = fs::create_dir_all(parent);
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    if let Ok(file) = fs::File::create(path) {
-        let _ = serde_json::to_writer_pretty(file, data);
-    }
+    let file = fs::File::create(path).map_err(|e| e.to_string())?;
+    serde_json::to_writer_pretty(file, data).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 // ── Conversion ────────────────────────────────────────────────────────────────

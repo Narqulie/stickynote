@@ -64,6 +64,7 @@ impl MenuState {
 
 // ── App ───────────────────────────────────────────────────────────────────────
 
+/// Application state holding all notes, UI mode, and interaction history.
 pub struct App {
     pub notes: Vec<Note>,
     pub selected: usize,
@@ -139,10 +140,12 @@ impl App {
 
     // ── Count ────────────────────────────────────────────────────────────────
 
+    /// Number of notes on the board.
     pub fn count(&self) -> usize {
         self.notes.len()
     }
 
+    /// Indices of notes visible under the current tag filter (or all notes if none).
     pub fn visible_note_indices(&self) -> Vec<usize> {
         if self.filter_tag.is_empty() {
             (0..self.notes.len()).collect()
@@ -156,12 +159,14 @@ impl App {
         }
     }
 
+    /// Number of notes matching the current tag filter.
     pub fn visible_count(&self) -> usize {
         self.visible_note_indices().len()
     }
 
     // ── Keyboard dispatch ────────────────────────────────────────────────────
 
+    /// Process a crossterm key event and update application state.
     pub fn handle_key(&mut self, key: KeyEvent) {
         if key.kind != KeyEventKind::Press && key.kind != KeyEventKind::Repeat {
             return;
@@ -372,10 +377,7 @@ impl App {
                 self.should_quit = true;
             }
             "esc" => {
-                self.show_overlay = false;
-                if !self.notes.is_empty() && self.selected < self.count() {
-                    self.notes[self.selected].editing = false;
-                }
+                self.toggle_overlay();
                 self.mark_dirty();
             }
             _ => {
@@ -736,6 +738,7 @@ impl App {
 
     // ── Mouse dispatch ───────────────────────────────────────────────────────
 
+    /// Process a crossterm mouse event and update application state.
     pub fn handle_mouse(&mut self, mouse: MouseEvent) {
         // Cancel delete/clear-tags confirmation on any mouse click.
         if self.confirm_delete && matches!(mouse.kind, MouseEventKind::Down(_)) {
@@ -836,8 +839,7 @@ impl App {
                 }
                 self.selected = idx;
                 if is_double {
-                    self.notes[idx].editing = true;
-                    self.notes[idx].cursor = self.notes[idx].content.len();
+                    self.toggle_edit();
                 }
             }
             return;
@@ -924,6 +926,7 @@ impl App {
 
     // ── Note operations ──────────────────────────────────────────────────────
 
+    /// Insert a new blank note at the top of the stack.
     pub fn add_note(&mut self) {
         let color_idx = self.count() % NOTE_COLORS.len();
         let note = Note {
@@ -938,6 +941,7 @@ impl App {
         self.mark_dirty();
     }
 
+    /// Remove the currently selected note from the board.
     pub fn delete_selected(&mut self) {
         if self.count() == 0 || (self.selected < self.count() && self.notes[self.selected].editing)
         {
@@ -951,6 +955,7 @@ impl App {
         self.mark_dirty();
     }
 
+    /// Toggle editing mode on the selected note, resetting cursors and focus.
     pub fn toggle_edit(&mut self) {
         if self.count() == 0 {
             return;
@@ -966,6 +971,7 @@ impl App {
         }
     }
 
+    /// Create a copy of the selected note inserted directly after it.
     pub fn duplicate_selected(&mut self) {
         if self.count() == 0 {
             return;
@@ -981,6 +987,7 @@ impl App {
         self.mark_dirty();
     }
 
+    /// Toggle full-screen overlay mode for the selected note.
     pub fn toggle_overlay(&mut self) {
         if self.count() == 0 {
             return;
@@ -996,6 +1003,7 @@ impl App {
         }
     }
 
+    /// Cycle the selected note through the colour palette.
     pub fn cycle_color(&mut self) {
         if self.count() == 0 {
             return;
@@ -1005,6 +1013,7 @@ impl App {
         note.color = next.to_string();
     }
 
+    /// Cycle the selected note through the available border styles.
     pub fn cycle_border(&mut self) {
         if self.count() == 0 {
             return;
@@ -1014,6 +1023,7 @@ impl App {
         note.border_style = next.to_string();
     }
 
+    /// Select the previous note in the stack (wraps around).
     pub fn select_prev(&mut self) {
         if self.count() == 0 {
             return;
@@ -1024,6 +1034,7 @@ impl App {
         self.selected = (self.selected + self.count() - 1) % self.count();
     }
 
+    /// Select the next note in the stack (wraps around).
     pub fn select_next(&mut self) {
         if self.count() == 0 {
             return;
@@ -1036,6 +1047,7 @@ impl App {
 
     // ── Tags ─────────────────────────────────────────────────────────────────
 
+    /// Rebuild the global tag registry from all notes (deduplicated, sorted).
     pub fn refresh_all_tags(&mut self) {
         let mut set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
         for note in &self.notes {
@@ -1048,25 +1060,36 @@ impl App {
 
     // ── Persistence helpers ──────────────────────────────────────────────────
 
+    /// Mark the board as changed so it will be saved on the next debounce cycle.
     pub fn mark_dirty(&mut self) {
         self.dirty = true;
     }
 
+    /// Force an immediate save to disk if the board is dirty.
     pub fn flush_save(&mut self) {
         if self.dirty {
             let data = SaveData::from_notes(&self.notes, self.theme_idx);
-            crate::persistence::save_board(&data, self.board_path.as_ref());
-            self.dirty = false;
-            self.last_save = Instant::now();
+            match crate::persistence::save_board(&data, self.board_path.as_ref()) {
+                Ok(()) => {
+                    self.dirty = false;
+                    self.last_save = Instant::now();
+                    self.save_error.clear();
+                }
+                Err(e) => {
+                    self.save_error = e;
+                }
+            }
         }
     }
 
+    /// Build a serialisable snapshot of the current board state.
     pub fn to_save_data(&self) -> SaveData {
         SaveData::from_notes(&self.notes, self.theme_idx)
     }
 
     // ── Status helpers (for the UI) ──────────────────────────────────────────
 
+    /// Build the status-bar text showing theme, note info, and active filters.
     pub fn status_text(&self) -> String {
         if self.mode == InputMode::TagInput {
             return format!(" tag: {}", self.input);
@@ -1106,6 +1129,7 @@ impl App {
         parts.join(" │ ")
     }
 
+    /// Context-sensitive hint text for the bottom hint bar.
     pub fn hint_bar(&self) -> &'static str {
         if self.confirm_delete {
             return " Delete note?  y:yes  n:no  Esc:cancel";

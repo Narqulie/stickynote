@@ -11,6 +11,7 @@ use crate::note::{Note, THEMES, Theme, color_name, parse_hex, parse_md};
 
 // ── Main render entry point ───────────────────────────────────────────────────
 
+/// Render the complete UI for the current application state into `frame`.
 pub fn render(app: &App, frame: &mut Frame) {
     let area = frame.area();
     let w = area.width;
@@ -32,7 +33,7 @@ pub fn render(app: &App, frame: &mut Frame) {
     }
 
     if app.count() == 0 && !app.show_help {
-        render_welcome(frame, area);
+        render_welcome(frame, area, theme);
         render_footer(app, frame, theme, h);
         return;
     }
@@ -87,18 +88,24 @@ pub fn render(app: &App, frame: &mut Frame) {
 
 /// Build a tab label string for a note, truncated to fit `remaining` columns.
 /// Format: " ● title " (untagged) or " # title " (tagged), truncated if needed.
+/// Markdown syntax is stripped from content previews so tabs stay readable.
 fn tab_label(note: &Note, remaining: u16) -> String {
-    let raw = if !note.title.is_empty() {
-        note.title.as_str()
+    let raw: String = if !note.title.is_empty() {
+        note.title.clone()
     } else {
-        note.first_line()
+        let first = note.first_line();
+        if first.is_empty() {
+            "empty".to_string()
+        } else {
+            crate::note::strip_md(first)
+        }
     };
-    let raw = if raw.is_empty() { "empty" } else { raw };
     let marker = if !note.tags.is_empty() { "#" } else { "●" };
     let label = format!(" {} {} ", marker, raw);
-    if label.len() as u16 > remaining {
+    if label.chars().count() as u16 > remaining {
         let max_title = remaining.saturating_sub(4) as usize;
-        format!(" {}… ", &raw[..max_title.max(1)])
+        let truncated: String = raw.chars().take(max_title.max(1)).collect();
+        format!(" {}… ", truncated)
     } else {
         label
     }
@@ -553,22 +560,13 @@ fn render_overlay(app: &App, frame: &mut Frame, theme: &Theme) {
     }
 
     let note = &app.notes[app.selected];
-    // The note should already be in editing mode, but ensure cursor is set.
-    let note_clone = Note {
-        cursor: if !note.content.is_empty() || note.editing {
-            note.cursor
-        } else {
-            note.content.len()
-        },
-        ..note.clone()
-    };
 
     // Centre the note vertically with a small top margin.
     let render_h = (h as f64 * 0.6) as u16;
     let render_y = (h - render_h) / 3;
     let note_rect = Rect::new(1, render_y, w.saturating_sub(2), render_h);
 
-    render_full_note(&note_clone, theme, false, false, &[], note_rect, frame);
+    render_full_note(note, theme, false, false, &[], note_rect, frame);
 
     // Footer with overlay-specific hints.
     render_bar(
@@ -587,7 +585,7 @@ fn render_overlay(app: &App, frame: &mut Frame, theme: &Theme) {
 
 // ── Welcome screen ────────────────────────────────────────────────────────────
 
-fn render_welcome(frame: &mut Frame, area: Rect) {
+fn render_welcome(frame: &mut Frame, area: Rect, theme: &Theme) {
     let w = area.width;
     let h = area.height;
 
@@ -614,19 +612,19 @@ fn render_welcome(frame: &mut Frame, area: Rect) {
 
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(Color::Rgb(0x88, 0x88, 0x88)))
-        .style(Style::new())
+        .border_style(Style::new().fg(theme.status_fg).dim())
+        .style(Style::new().bg(theme.hint_bg))
         .padding(ratatui::widgets::Padding::horizontal(2));
 
     let par = Paragraph::new(content)
         .block(block)
-        .style(Style::new().fg(Color::Rgb(0xcc, 0xcc, 0xcc)));
+        .style(Style::new().fg(theme.status_fg));
     frame.render_widget(par, Rect::new(start_x, start_y, box_w, box_h));
 }
 
 // ── Context menu ──────────────────────────────────────────────────────────────
 
-fn render_menu(app: &App, frame: &mut Frame, _theme: &Theme) {
+fn render_menu(app: &App, frame: &mut Frame, theme: &Theme) {
     let labels: Vec<&str> = app
         .menu
         .items
@@ -650,13 +648,9 @@ fn render_menu(app: &App, frame: &mut Frame, _theme: &Theme) {
     for (i, label) in labels.iter().enumerate() {
         let is_selected = i == app.menu.selected;
         let item_style = if is_selected {
-            Style::new()
-                .bg(Color::Rgb(0x55, 0x55, 0x55))
-                .fg(Color::White)
+            Style::new().bg(theme.sel_border).fg(theme.status_bg)
         } else {
-            Style::new()
-                .bg(Color::Rgb(0x22, 0x22, 0x22))
-                .fg(Color::White)
+            Style::new().bg(theme.hint_bg).fg(theme.status_fg)
         };
         items.push(Line::from(Span::styled(
             format!("{label: <width$}", width = inner_w as usize),
@@ -666,8 +660,8 @@ fn render_menu(app: &App, frame: &mut Frame, _theme: &Theme) {
 
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(Color::Rgb(0xaa, 0xaa, 0xaa)))
-        .style(Style::new().bg(Color::Rgb(0x11, 0x11, 0x11)));
+        .border_style(Style::new().fg(theme.sel_border))
+        .style(Style::new().bg(theme.hint_bg));
 
     let par = Paragraph::new(items).block(block);
     let menu_rect = Rect::new(app.menu.x, app.menu.y, menu_w, menu_h);
