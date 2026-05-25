@@ -43,14 +43,7 @@ cargo install stickynote
 ### From Homebrew
 
 ```bash
-brew install https://raw.githubusercontent.com/Narqulie/stickynote/v0.1.0/stickynote.rb
-```
-
-Tip: create a local alias so you can just `brew install stickynote`:
-
-```bash
-brew tap-info Narqulie/stickynote 2>/dev/null || brew tap Narqulie/stickynote https://github.com/Narqulie/stickynote
-brew install stickynote
+brew install Narqulie/stickynote/stickynote
 ```
 
 ### From source
