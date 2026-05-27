@@ -1,8 +1,8 @@
 class Stickynote < Formula
   desc "Terminal-based sticky notes board with markdown, tags, and mouse support"
   homepage "https://github.com/Narqulie/stickynote"
-  url "https://github.com/Narqulie/stickynote/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 "69b70d3d8c68cb03a400a649fe0088d5681de4a6999e88f5ba30fd51e1a7a83e"
+  url "https://github.com/Narqulie/stickynote/archive/refs/tags/v0.2.0.tar.gz"
+  sha256 "2fae944f85f168b03379bc724a14063a69052075fb14ae1489f7ee82a8104e16"
   license "MIT"
 
   depends_on "rust" => :build
