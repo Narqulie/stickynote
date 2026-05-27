@@ -282,12 +282,17 @@ fn render_full_note(
             format!("{:pad$}{}", "", info, pad = pad as usize)
         }
     };
-    let header_style = if header_focused {
-        Style::new().fg(theme.sel_border)
+    // When there's a title selection, build styled spans with selection highlight.
+    let header_line: Line = if note.has_title_selection() && header_focused {
+        render_title_with_selection(note, title_width, base_style, theme)
     } else {
-        Style::new().fg(fg).dim()
+        let hdr_style = if header_focused {
+            Style::new().fg(theme.sel_border)
+        } else {
+            Style::new().fg(fg).dim()
+        };
+        Line::from(Span::styled(header_display, hdr_style))
     };
-    let header_line = Line::from(Span::styled(header_display, header_style));
 
     // ── Tags section visibility ──────────────────────────────────────────────────
     let has_tags_area =
@@ -372,20 +377,23 @@ fn render_full_note(
         max_line
     };
 
-    // ── Content lines (rebuilt with correct max_line) ─────────────────────────
-    let content_lines = note.content_lines();
-    let body_lines: Vec<Line> = content_lines
-        .iter()
-        .map(|l| {
-            let display = if l.len() as u16 > content_max_line {
-                let max_len = content_max_line as usize;
-                format!("{}…", &l[..max_len])
-            } else {
-                l.clone()
-            };
-            Line::from(parse_md(&display, base_style))
-        })
-        .collect();
+    // ── Content lines (with selection support) ──────────────────────────────
+    let body_lines: Vec<Line> = if note.has_content_selection() {
+        render_content_with_selection(note, content_max_line, base_style)
+    } else {
+        let raw = note.content_lines();
+        raw.iter()
+            .map(|l| {
+                let display = if l.len() as u16 > content_max_line {
+                    let max_len = content_max_line as usize;
+                    format!("{}…", &l[..max_len])
+                } else {
+                    l.clone()
+                };
+                Line::from(parse_md(&display, base_style))
+            })
+            .collect()
+    };
 
     // ── Render ──────────────────────────────────────────────────────────────────
     if note.border_style == "hidden" && !note.editing {
@@ -421,10 +429,7 @@ fn render_full_note(
                 );
             }
             if tag_focused {
-                frame.render_widget(
-                    focus_block(),
-                    Rect::new(inner_x, tags_sep_y, inner_w, 3),
-                );
+                frame.render_widget(focus_block(), Rect::new(inner_x, tags_sep_y, inner_w, 3));
             }
             render_tags_chips(
                 note,
@@ -475,10 +480,7 @@ fn render_full_note(
                 );
             }
             if tag_focused {
-                frame.render_widget(
-                    focus_block(),
-                    Rect::new(inner_x, tags_sep_y, inner_w, 3),
-                );
+                frame.render_widget(focus_block(), Rect::new(inner_x, tags_sep_y, inner_w, 3));
             }
             render_tags_chips(
                 note,
@@ -737,7 +739,18 @@ fn render_help(frame: &mut Frame, area: Rect, theme: &Theme) {
         "",
         "  Inline editing (Tab cycles focus):",
         "  Header   Edit note title",
+        "  Content  Edit note body",
         "  Tags     Type + Enter to add | ←/→ select | Del",
+        "",
+        "  Text selection (Header / Content):",
+        "  ^a       Select all",
+        "  ^c       Copy selected text",
+        "  ^x       Cut selected text",
+        "  ^v       Paste from clipboard",
+        "  Shift+←/→ Extend selection left/right",
+        "  Shift+↑/↓ Extend selection up/down",
+        "  Mouse    Click to position, drag to select",
+        "",
         "  ←/→      Navigate tabs",
         "  ?        Toggle this help",
         "  ^R       Cycle theme",
@@ -755,7 +768,7 @@ fn render_help(frame: &mut Frame, area: Rect, theme: &Theme) {
     let content = lines.join("\n");
 
     let box_h = lines.len() as u16 + 2;
-    let box_w = 44u16.min(w.saturating_sub(4));
+    let box_w = 56u16.min(w.saturating_sub(4));
 
     let start_x = (w.saturating_sub(box_w)) / 2;
     let start_y = (area.height.saturating_sub(box_h)) / 4;
@@ -812,4 +825,143 @@ fn render_par(frame: &mut Frame, text: &str, style: Style, rect: Rect) {
 /// Render a bar (full-width single line) with text and style.
 fn render_bar(frame: &mut Frame, text: &str, style: Style, rect: Rect) {
     frame.render_widget(Paragraph::new(text).style(style), rect);
+}
+
+// ── Selection rendering ──────────────────────────────────────────────────────
+
+/// Selection highlight style — medium gray bg, white fg.
+fn selection_style() -> Style {
+    Style::new()
+        .bg(Color::Rgb(0x55, 0x55, 0x55))
+        .fg(Color::White)
+}
+
+/// Build content lines with the selected range highlighted.
+fn render_content_with_selection(note: &Note, max_line: u16, base_style: Style) -> Vec<Line<'_>> {
+    let Some((sel_s, sel_e)) = note.content_selection_range() else {
+        return Vec::new();
+    };
+    let sel_style = selection_style();
+    let mut lines = Vec::new();
+    let mut byte_pos = 0usize;
+
+    for line_str in note.content.split('\n') {
+        let line_start = byte_pos;
+        let line_end = byte_pos + line_str.len();
+        let line_len = line_str.len();
+
+        // Truncate raw line to max_line.
+        let truncated: &str = if line_len as u16 > max_line {
+            &line_str[..max_line as usize]
+        } else {
+            line_str
+        };
+
+        let line = if sel_s < line_end && sel_e > line_start {
+            let mut spans: Vec<Span> = Vec::new();
+
+            let local_s = sel_s.saturating_sub(line_start).min(truncated.len());
+            let local_e = sel_e.saturating_sub(line_start).min(truncated.len());
+
+            if local_s > 0 {
+                spans.extend(parse_md(&truncated[..local_s], base_style));
+            }
+            if local_s < local_e {
+                spans.push(Span::styled(
+                    truncated[local_s..local_e].to_string(),
+                    sel_style,
+                ));
+            }
+            if local_e < truncated.len() {
+                spans.extend(parse_md(&truncated[local_e..], base_style));
+            }
+            Line::from(spans)
+        } else {
+            Line::from(parse_md(truncated, base_style))
+        };
+
+        lines.push(line);
+        byte_pos = line_end + 1;
+    }
+
+    lines
+}
+
+/// Build a title Line with the selected range highlighted.
+/// Includes cursor marker only at the active end of the selection.
+fn render_title_with_selection<'a>(
+    note: &'a Note,
+    title_width: u16,
+    _base_style: Style,
+    theme: &'a Theme,
+) -> Line<'a> {
+    let Some((ts, te)) = note.title_selection_range() else {
+        return Line::from(Span::styled(
+            note.title.clone(),
+            Style::new().fg(theme.sel_border),
+        ));
+    };
+    let sel_style = selection_style();
+    let raw = &note.title;
+
+    // Show cursor at the active end (sel_end tracks the moving end).
+    let display = raw.to_string();
+    let cursor_idx = note.title_cursor.min(display.len());
+    // Cursor is shown after the selection active end; if cursor has moved past
+    // the start, insert marker. Only show cursor at the active end.
+    let cursor_shown = note.editing && note.title_cursor == note.title_sel_end.unwrap_or(0);
+
+    // Build the display: truncate + center-justify, then split into spans.
+    let title_len = display.len() as u16;
+    let (padded, pad_start) = if title_len <= title_width {
+        let pad = (title_width - title_len) / 2;
+        (
+            format!("{:pad$}{}", "", display, pad = pad as usize),
+            pad as usize,
+        )
+    } else {
+        // Truncate
+        let max = title_width as usize;
+        if cursor_shown && cursor_idx >= max {
+            let offset = cursor_idx.saturating_sub(max.saturating_sub(1));
+            let tail: String = raw
+                .chars()
+                .skip(offset)
+                .take(max.saturating_sub(1))
+                .collect();
+            (format!("{}█", tail), 0usize)
+        } else {
+            let max_show = max.saturating_sub(1);
+            (format!("{}…", &display[..max_show]), 0usize)
+        }
+    };
+
+    // Map selection range onto padded display.
+    let display_len = padded.len();
+    let sel_start_display = ts + pad_start;
+    let sel_end_display = te + pad_start;
+
+    let line_style = Style::new().fg(theme.sel_border);
+
+    if sel_start_display < display_len {
+        let mut spans: Vec<Span> = Vec::new();
+        if sel_start_display > 0 {
+            spans.push(Span::styled(
+                padded[..sel_start_display].to_string(),
+                line_style,
+            ));
+        }
+        let sel_end = sel_end_display.min(display_len);
+        if sel_start_display < sel_end {
+            let sel_text = &padded[sel_start_display..sel_end];
+            spans.push(Span::styled(sel_text.to_string(), sel_style));
+        }
+        if sel_end < display_len {
+            let remaining = &padded[sel_end..];
+            spans.push(Span::styled(remaining.to_string(), line_style));
+        }
+        Line::from(spans)
+    } else {
+        Line::from(Span::styled(padded, line_style))
+    }
 }

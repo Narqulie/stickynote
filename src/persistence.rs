@@ -127,6 +127,10 @@ impl SaveData {
                     cursor: 0,
                     tag_input: String::new(),
                     tag_cursor: None,
+                    sel_start: None,
+                    sel_end: None,
+                    title_sel_start: None,
+                    title_sel_end: None,
                 }
             })
             .collect()

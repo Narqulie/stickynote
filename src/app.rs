@@ -99,6 +99,9 @@ pub struct App {
 
     /// Custom board file path from CLI (None = default ~/.stickynote/board.json).
     pub board_path: Option<PathBuf>,
+
+    /// True while the user is dragging the mouse to select text.
+    pub mouse_dragging: bool,
 }
 
 impl App {
@@ -130,6 +133,7 @@ impl App {
             confirm_clear_tags: false,
             edit_focus: EditFocus::Content,
             board_path: None,
+            mouse_dragging: false,
         };
         if app.count() > 0 {
             app.selected = 0;
@@ -189,12 +193,48 @@ impl App {
                     "tab".into()
                 }
             }
-            KeyCode::Up => "up".into(),
-            KeyCode::Down => "down".into(),
-            KeyCode::Left => "left".into(),
-            KeyCode::Right => "right".into(),
-            KeyCode::Home => "home".into(),
-            KeyCode::End => "end".into(),
+            KeyCode::Up => {
+                if key.modifiers.contains(KeyModifiers::SHIFT) {
+                    "shift+up".into()
+                } else {
+                    "up".into()
+                }
+            }
+            KeyCode::Down => {
+                if key.modifiers.contains(KeyModifiers::SHIFT) {
+                    "shift+down".into()
+                } else {
+                    "down".into()
+                }
+            }
+            KeyCode::Left => {
+                if key.modifiers.contains(KeyModifiers::SHIFT) {
+                    "shift+left".into()
+                } else {
+                    "left".into()
+                }
+            }
+            KeyCode::Right => {
+                if key.modifiers.contains(KeyModifiers::SHIFT) {
+                    "shift+right".into()
+                } else {
+                    "right".into()
+                }
+            }
+            KeyCode::Home => {
+                if key.modifiers.contains(KeyModifiers::SHIFT) {
+                    "shift+home".into()
+                } else {
+                    "home".into()
+                }
+            }
+            KeyCode::End => {
+                if key.modifiers.contains(KeyModifiers::SHIFT) {
+                    "shift+end".into()
+                } else {
+                    "end".into()
+                }
+            }
             KeyCode::Delete => "delete".into(),
             KeyCode::BackTab => "shift+tab".into(),
             _ => return,
@@ -218,8 +258,16 @@ impl App {
             return;
         }
 
-        // Ctrl+C: quit (or exit mode).
+        // Ctrl+C: copy (if editing+selection) else quit (or exit mode).
         if ks == "^c" {
+            if self.count() > 0
+                && self.selected < self.count()
+                && self.notes[self.selected].editing
+                && self.notes[self.selected].any_selection()
+            {
+                self.copy_selection();
+                return;
+            }
             if self.mode != InputMode::Normal {
                 self.mode = InputMode::Normal;
                 return;
@@ -510,6 +558,34 @@ impl App {
                 self.mark_dirty();
                 return;
             }
+            "^v" => {
+                self.paste_text();
+                return;
+            }
+            "^x" => {
+                self.cut_selection();
+                return;
+            }
+            "^a" => {
+                let note = &mut self.notes[self.selected];
+                match self.edit_focus {
+                    EditFocus::Header => {
+                        if !note.title.is_empty() {
+                            note.title_sel_start = Some(0);
+                            note.title_sel_end = Some(note.title.len());
+                        }
+                    }
+                    EditFocus::Content => {
+                        if !note.content.is_empty() {
+                            note.sel_start = Some(0);
+                            note.sel_end = Some(note.content.len());
+                        }
+                    }
+                    _ => {}
+                }
+                self.mark_dirty();
+                return;
+            }
             "tab" => {
                 // In Tags focus with matching suggestions: autofill.
                 if self.edit_focus == EditFocus::Tags {
@@ -543,18 +619,25 @@ impl App {
                 let note = &mut self.notes[self.selected];
                 match ks {
                     "enter" | "down" => {
+                        note.clear_title_selection();
                         // Move to content.
                         self.edit_focus = EditFocus::Content;
                     }
                     "backspace" => {
-                        if note.title_cursor > 0 {
+                        if note.has_title_selection() {
+                            note.delete_selected_title();
+                            self.mark_dirty();
+                        } else if note.title_cursor > 0 {
                             note.title.remove(note.title_cursor - 1);
                             note.title_cursor = note.title_cursor.saturating_sub(1);
                             self.mark_dirty();
                         }
                     }
                     "delete" => {
-                        if note.title_cursor < note.title.len() {
+                        if note.has_title_selection() {
+                            note.delete_selected_title();
+                            self.mark_dirty();
+                        } else if note.title_cursor < note.title.len() {
                             note.title.remove(note.title_cursor);
                             self.mark_dirty();
                         }
@@ -563,22 +646,61 @@ impl App {
                         if note.title_cursor > 0 {
                             note.title_cursor -= 1;
                         }
+                        note.clear_title_selection();
                     }
                     "right" => {
                         if note.title_cursor < note.title.len() {
                             note.title_cursor += 1;
                         }
+                        note.clear_title_selection();
+                    }
+                    "shift+left" => {
+                        if note.title_cursor > 0 {
+                            if note.title_sel_start.is_none() {
+                                note.title_sel_start = Some(note.title_cursor);
+                            }
+                            note.title_cursor -= 1;
+                            note.title_sel_end = Some(note.title_cursor);
+                        }
+                    }
+                    "shift+right" => {
+                        if note.title_cursor < note.title.len() {
+                            if note.title_sel_start.is_none() {
+                                note.title_sel_start = Some(note.title_cursor);
+                            }
+                            note.title_cursor += 1;
+                            note.title_sel_end = Some(note.title_cursor);
+                        }
+                    }
+                    "shift+home" => {
+                        if note.title_sel_start.is_none() {
+                            note.title_sel_start = Some(note.title_cursor);
+                        }
+                        note.title_cursor = 0;
+                        note.title_sel_end = Some(0);
+                    }
+                    "shift+end" => {
+                        if note.title_sel_start.is_none() {
+                            note.title_sel_start = Some(note.title_cursor);
+                        }
+                        note.title_cursor = note.title.len();
+                        note.title_sel_end = Some(note.title.len());
                     }
                     "home" => {
                         note.title_cursor = 0;
+                        note.clear_title_selection();
                     }
                     "end" => {
                         note.title_cursor = note.title.len();
+                        note.clear_title_selection();
                     }
                     _ => {
                         if let Some(c) = ks.chars().next()
                             && (c.is_ascii_graphic() || c == ' ')
                         {
+                            if note.has_title_selection() {
+                                note.delete_selected_title();
+                            }
                             note.title.insert(note.title_cursor, c);
                             note.title_cursor += 1;
                             self.mark_dirty();
@@ -678,12 +800,18 @@ impl App {
                 let note = &mut self.notes[self.selected];
                 match ks {
                     "enter" => {
+                        if note.has_content_selection() {
+                            note.delete_selected_content();
+                        }
                         note.content.insert(note.cursor, '\n');
                         note.cursor += 1;
                         self.mark_dirty();
                     }
                     "backspace" => {
-                        if note.cursor > 0 {
+                        if note.has_content_selection() {
+                            note.delete_selected_content();
+                            self.mark_dirty();
+                        } else if note.cursor > 0 {
                             note.content.remove(note.cursor - 1);
                             note.cursor = note.cursor.saturating_sub(1);
                             self.mark_dirty();
@@ -693,26 +821,31 @@ impl App {
                         if note.cursor > 0 {
                             note.cursor -= 1;
                         }
+                        note.clear_content_selection();
                     }
                     "right" => {
                         if note.cursor < note.content.len() {
                             note.cursor += 1;
                         }
+                        note.clear_content_selection();
                     }
                     "up" => {
                         let (line, col) = note.cursor_pos();
                         if line > 0 {
                             note.cursor = note.pos_to_cursor(line - 1, col);
                         }
+                        note.clear_content_selection();
                     }
                     "down" => {
                         let (line, col) = note.cursor_pos();
                         note.cursor = note.pos_to_cursor(line + 1, col);
+                        note.clear_content_selection();
                     }
                     "home" => {
                         let before = &note.content[..note.cursor];
                         let line_start = before.rfind('\n').map(|i| i + 1).unwrap_or(0);
                         note.cursor = line_start;
+                        note.clear_content_selection();
                     }
                     "end" => {
                         let after = &note.content[note.cursor..];
@@ -721,11 +854,74 @@ impl App {
                             .map(|i| note.cursor + i)
                             .unwrap_or(note.content.len());
                         note.cursor = line_end;
+                        note.clear_content_selection();
+                    }
+                    "shift+left" => {
+                        if note.cursor > 0 {
+                            if note.sel_start.is_none() {
+                                note.sel_start = Some(note.cursor);
+                            }
+                            note.cursor -= 1;
+                            note.sel_end = Some(note.cursor);
+                        }
+                    }
+                    "shift+right" => {
+                        if note.cursor < note.content.len() {
+                            if note.sel_start.is_none() {
+                                note.sel_start = Some(note.cursor);
+                            }
+                            note.cursor += 1;
+                            note.sel_end = Some(note.cursor);
+                        }
+                    }
+                    "shift+up" => {
+                        let (line, col) = note.cursor_pos();
+                        if note.sel_start.is_none() {
+                            note.sel_start = Some(note.cursor);
+                        }
+                        if line > 0 {
+                            note.cursor = note.pos_to_cursor(line - 1, col);
+                        } else {
+                            note.cursor = 0;
+                        }
+                        note.sel_end = Some(note.cursor);
+                    }
+                    "shift+down" => {
+                        let (line, col) = note.cursor_pos();
+                        if note.sel_start.is_none() {
+                            note.sel_start = Some(note.cursor);
+                        }
+                        note.cursor = note.pos_to_cursor(line + 1, col);
+                        note.sel_end = Some(note.cursor);
+                    }
+                    "shift+home" => {
+                        if note.sel_start.is_none() {
+                            note.sel_start = Some(note.cursor);
+                        }
+                        let before = &note.content[..note.cursor];
+                        let line_start = before.rfind('\n').map(|i| i + 1).unwrap_or(0);
+                        note.cursor = line_start;
+                        note.sel_end = Some(note.cursor);
+                    }
+                    "shift+end" => {
+                        if note.sel_start.is_none() {
+                            note.sel_start = Some(note.cursor);
+                        }
+                        let after = &note.content[note.cursor..];
+                        let line_end = after
+                            .find('\n')
+                            .map(|i| note.cursor + i)
+                            .unwrap_or(note.content.len());
+                        note.cursor = line_end;
+                        note.sel_end = Some(note.cursor);
                     }
                     _ => {
                         if let Some(c) = ks.chars().next()
                             && (c.is_ascii_graphic() || c == ' ')
                         {
+                            if note.has_content_selection() {
+                                note.delete_selected_content();
+                            }
                             note.content.insert(note.cursor, c);
                             note.cursor += 1;
                             self.mark_dirty();
@@ -749,14 +945,16 @@ impl App {
             self.confirm_clear_tags = false;
             return;
         }
-        // Ignore mouse events in input modes or editing.
+        // Ignore mouse events in input modes.
         if self.mode != InputMode::Normal {
             return;
         }
+        // While editing: route to mouse edit handler for positioning/selection.
         if !self.notes.is_empty()
             && self.selected < self.count()
             && self.notes[self.selected].editing
         {
+            self.handle_mouse_edit(mouse);
             return;
         }
         if self.show_help {
@@ -967,7 +1165,10 @@ impl App {
             note.title_cursor = note.title.len();
             note.tag_input.clear();
             note.tag_cursor = None;
+            note.clear_all_selections();
             self.edit_focus = EditFocus::Header;
+        } else {
+            note.clear_all_selections();
         }
     }
 
@@ -1000,6 +1201,208 @@ impl App {
             }
         } else if self.selected < self.count() {
             self.notes[self.selected].editing = false;
+        }
+    }
+
+    // ── Clipboard operations ───────────────────────────────────────────────
+
+    /// Copy selected text to the system clipboard.
+    pub fn copy_selection(&mut self) {
+        if self.selected >= self.count() {
+            return;
+        }
+        let note = &self.notes[self.selected];
+        let text = match self.edit_focus {
+            EditFocus::Header => note.selected_title(),
+            EditFocus::Content => note.selected_text(),
+            EditFocus::Tags => return,
+        };
+        if text.is_empty() {
+            return;
+        }
+        match copy_to_clipboard(&text) {
+            Ok(()) => {}
+            Err(e) => self.save_error = e,
+        }
+    }
+
+    /// Cut selected text to the system clipboard.
+    pub fn cut_selection(&mut self) {
+        if self.selected >= self.count() {
+            return;
+        }
+        let text = match self.edit_focus {
+            EditFocus::Header => self.notes[self.selected].delete_selected_title(),
+            EditFocus::Content => self.notes[self.selected].delete_selected_content(),
+            EditFocus::Tags => return,
+        };
+        if text.is_empty() {
+            return;
+        }
+        match copy_to_clipboard(&text) {
+            Ok(()) => self.mark_dirty(),
+            Err(e) => self.save_error = e,
+        }
+    }
+
+    /// Paste text from the system clipboard at the cursor position.
+    pub fn paste_text(&mut self) {
+        if self.selected >= self.count() {
+            return;
+        }
+        let text = match paste_from_clipboard() {
+            Ok(t) => t,
+            Err(e) => {
+                self.save_error = e;
+                return;
+            }
+        };
+        // Filter: keep ASCII graphic, space, and newline only.
+        let filtered: String = text
+            .chars()
+            .filter(|c| c.is_ascii_graphic() || *c == ' ' || *c == '\n')
+            .collect();
+        if filtered.is_empty() {
+            return;
+        }
+        let note = &mut self.notes[self.selected];
+        match self.edit_focus {
+            EditFocus::Header => {
+                if note.has_title_selection() {
+                    note.delete_selected_title();
+                }
+                for c in filtered.chars() {
+                    note.title.insert(note.title_cursor, c);
+                    note.title_cursor += 1;
+                }
+                self.mark_dirty();
+            }
+            EditFocus::Content => {
+                if note.has_content_selection() {
+                    note.delete_selected_content();
+                }
+                for c in filtered.chars() {
+                    note.content.insert(note.cursor, c);
+                    note.cursor += 1;
+                }
+                self.mark_dirty();
+            }
+            EditFocus::Tags => {}
+        }
+    }
+
+    // ── Mouse editing (cursor positioning + selection) ──────────────────────
+
+    /// Handle mouse events while a note is being edited.
+    fn handle_mouse_edit(&mut self, mouse: MouseEvent) {
+        let mx = mouse.column;
+        let my = mouse.row;
+
+        // Right-click or middle-click during editing: stop editing.
+        if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right))
+            || matches!(mouse.kind, MouseEventKind::Down(MouseButton::Middle))
+        {
+            if self.selected < self.count() {
+                self.notes[self.selected].editing = false;
+            }
+            return;
+        }
+
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                self.mouse_dragging = false;
+                self.mouse_edit_click(mx, my);
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                if !self.mouse_dragging {
+                    // Start drag selection.
+                    self.mouse_dragging = true;
+                    if self.selected < self.count() {
+                        let note = &mut self.notes[self.selected];
+                        if note.sel_start.is_none() {
+                            note.sel_start = Some(note.cursor);
+                        }
+                    }
+                }
+                self.mouse_edit_drag(mx, my);
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                self.mouse_dragging = false;
+            }
+            MouseEventKind::ScrollUp => {
+                // Scroll up during editing = go to previous line.
+                if self.selected < self.count() {
+                    let note = &mut self.notes[self.selected];
+                    let (line, col) = note.cursor_pos();
+                    if line > 0 {
+                        note.cursor = note.pos_to_cursor(line - 1, col);
+                    }
+                }
+            }
+            MouseEventKind::ScrollDown => {
+                if self.selected < self.count() {
+                    let note = &mut self.notes[self.selected];
+                    let (line, col) = note.cursor_pos();
+                    note.cursor = note.pos_to_cursor(line + 1, col);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Position cursor from a mouse click in the content area.
+    fn mouse_edit_click(&mut self, mx: u16, my: u16) {
+        if self.selected >= self.count() {
+            return;
+        }
+        let note = &mut self.notes[self.selected];
+
+        // Determine which section was clicked based on y-coordinate.
+        // Tab bar is row 0. Note card starts at row 1.
+        // With border: inner_y = 2. Without: inner_y = 1.
+        let has_border = note.border_style != "hidden" || note.editing;
+        let inner_y = if has_border { 2u16 } else { 1u16 };
+        // header starts at inner_y, header_sep at inner_y + 1, body at inner_y + 2.
+        let header_y = inner_y;
+        let body_y = inner_y + 2;
+
+        if my == header_y {
+            // Click in header area.
+            let rel_x = mx.saturating_sub(2) as usize;
+            let pos = rel_x.min(note.title.len());
+            note.title_cursor = pos;
+            note.clear_title_selection();
+            self.edit_focus = EditFocus::Header;
+        } else if my >= body_y {
+            // Click in content body.
+            let line = (my - body_y) as usize;
+            let rel_x = mx.saturating_sub(2) as usize;
+            let pos = note.pos_to_cursor(line, rel_x);
+            note.cursor = pos;
+            note.clear_content_selection();
+            self.edit_focus = EditFocus::Content;
+        }
+    }
+
+    /// Extend selection on mouse drag.
+    fn mouse_edit_drag(&mut self, mx: u16, my: u16) {
+        if self.selected >= self.count() {
+            return;
+        }
+        let note = &mut self.notes[self.selected];
+
+        let has_border = note.border_style != "hidden" || note.editing;
+        let inner_y = if has_border { 2u16 } else { 1u16 };
+        let body_y = inner_y + 2;
+
+        if my >= body_y {
+            let line = (my - body_y) as usize;
+            let rel_x = mx.saturating_sub(2) as usize;
+            let pos = note.pos_to_cursor(line, rel_x);
+            if pos != note.cursor {
+                note.cursor = pos;
+                note.sel_end = Some(pos);
+            }
         }
     }
 
@@ -1146,16 +1549,30 @@ impl App {
         if self.count() > 0 && self.notes[self.selected].editing {
             return match self.edit_focus {
                 EditFocus::Header => {
-                    " Esc:stop  Tab:content  Enter:content  Backspace:delete  [type title]"
+                    " Esc:stop  Tab:content  Enter:content  ^c:copy  ^x:cut  ^v:paste  ^a:all  Backspace:del"
                 }
                 EditFocus::Tags => {
                     " Esc:stop  Tab:header  Enter:add  ←/→:select tag  Backspace:del  [type tag name]"
                 }
                 EditFocus::Content => {
-                    " Esc:stop  Tab:tags  Enter:newline  Backspace:delete  [↑↓←→ navigate]"
+                    " Esc:stop  Tab:tags  Enter:newline  ^c:copy  ^x:cut  ^v:paste  ^a:all  ←/→/↑/↓:move"
                 }
             };
         }
         " n:new  d:del  e:edit  c:color  b:border  ←/→:navigate  T:filter  /:search  O:overlay  ?:help  ^R:theme  q:quit"
     }
+}
+
+// ── Clipboard helpers ─────────────────────────────────────────────────────────
+
+/// Copy text to the system clipboard.
+fn copy_to_clipboard(text: &str) -> Result<(), String> {
+    let mut clip = arboard::Clipboard::new().map_err(|e| format!("clipboard: {e}"))?;
+    clip.set_text(text).map_err(|e| format!("clipboard: {e}"))
+}
+
+/// Read text from the system clipboard.
+fn paste_from_clipboard() -> Result<String, String> {
+    let mut clip = arboard::Clipboard::new().map_err(|e| format!("clipboard: {e}"))?;
+    clip.get_text().map_err(|e| format!("clipboard: {e}"))
 }

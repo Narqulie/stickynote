@@ -75,6 +75,16 @@ pub struct Note {
     pub tag_input: String,
     /// Selected tag index during tag navigation (None = no tag selected).
     pub tag_cursor: Option<usize>,
+
+    // ── Text selection (transient, not persisted) ─────────────────────────
+    /// Content selection anchor byte position.
+    pub sel_start: Option<usize>,
+    /// Content selection active end byte position.
+    pub sel_end: Option<usize>,
+    /// Title selection anchor byte position.
+    pub title_sel_start: Option<usize>,
+    /// Title selection active end byte position.
+    pub title_sel_end: Option<usize>,
 }
 
 impl Note {
@@ -92,6 +102,10 @@ impl Note {
             cursor: 0,
             tag_input: String::new(),
             tag_cursor: None,
+            sel_start: None,
+            sel_end: None,
+            title_sel_start: None,
+            title_sel_end: None,
         }
     }
 
@@ -146,6 +160,106 @@ impl Note {
             pos += line.len() + 1; // +1 for the '\n' separator
         }
         self.content.len()
+    }
+}
+
+// ── Text selection ────────────────────────────────────────────────────────────
+
+impl Note {
+    /// True if content has an active (non-empty) text selection.
+    pub fn has_content_selection(&self) -> bool {
+        match (self.sel_start, self.sel_end) {
+            (Some(s), Some(e)) => s != e,
+            _ => false,
+        }
+    }
+
+    /// True if title has an active (non-empty) text selection.
+    pub fn has_title_selection(&self) -> bool {
+        match (self.title_sel_start, self.title_sel_end) {
+            (Some(s), Some(e)) => s != e,
+            _ => false,
+        }
+    }
+
+    /// True if either content or title has a selection.
+    pub fn any_selection(&self) -> bool {
+        self.has_content_selection() || self.has_title_selection()
+    }
+
+    /// Return `(min, max)` of the content selection, if any.
+    pub fn content_selection_range(&self) -> Option<(usize, usize)> {
+        match (self.sel_start, self.sel_end) {
+            (Some(s), Some(e)) if s != e => Some((s.min(e), s.max(e))),
+            _ => None,
+        }
+    }
+
+    /// Return `(min, max)` of the title selection, if any.
+    pub fn title_selection_range(&self) -> Option<(usize, usize)> {
+        match (self.title_sel_start, self.title_sel_end) {
+            (Some(s), Some(e)) if s != e => Some((s.min(e), s.max(e))),
+            _ => None,
+        }
+    }
+
+    /// The text currently selected in the content body.
+    pub fn selected_text(&self) -> String {
+        self.content_selection_range()
+            .map(|(s, e)| self.content[s..e].to_string())
+            .unwrap_or_default()
+    }
+
+    /// The text currently selected in the title.
+    pub fn selected_title(&self) -> String {
+        self.title_selection_range()
+            .map(|(s, e)| self.title[s..e].to_string())
+            .unwrap_or_default()
+    }
+
+    pub fn clear_content_selection(&mut self) {
+        self.sel_start = None;
+        self.sel_end = None;
+    }
+
+    pub fn clear_title_selection(&mut self) {
+        self.title_sel_start = None;
+        self.title_sel_end = None;
+    }
+
+    pub fn clear_all_selections(&mut self) {
+        self.clear_content_selection();
+        self.clear_title_selection();
+    }
+
+    /// Delete the content selection, return the deleted text, and place the cursor
+    /// at the deletion point.
+    pub fn delete_selected_content(&mut self) -> String {
+        if let Some((s, e)) = self.content_selection_range() {
+            let deleted = self.content[s..e].to_string();
+            self.content.drain(s..e);
+            self.cursor = s;
+            self.sel_start = None;
+            self.sel_end = None;
+            deleted
+        } else {
+            String::new()
+        }
+    }
+
+    /// Delete the title selection, return the deleted text, and place the cursor
+    /// at the deletion point.
+    pub fn delete_selected_title(&mut self) -> String {
+        if let Some((s, e)) = self.title_selection_range() {
+            let deleted = self.title[s..e].to_string();
+            self.title.drain(s..e);
+            self.title_cursor = s;
+            self.title_sel_start = None;
+            self.title_sel_end = None;
+            deleted
+        } else {
+            String::new()
+        }
     }
 }
 
@@ -533,5 +647,91 @@ mod tests {
         assert_eq!(spans[1].content, "b");
         assert!(spans[1].style.add_modifier.contains(Modifier::BOLD));
         assert_eq!(spans[2].content, " c");
+    }
+
+    // ── Text selection ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_selection_none_by_default() {
+        let n = Note::new();
+        assert!(!n.has_content_selection());
+        assert!(!n.has_title_selection());
+        assert!(!n.any_selection());
+        assert_eq!(n.selected_text(), "");
+        assert_eq!(n.selected_title(), "");
+    }
+
+    #[test]
+    fn test_content_selection_range() {
+        let mut n = Note {
+            content: "hello world".into(),
+            ..Note::new()
+        };
+        n.sel_start = Some(0);
+        n.sel_end = Some(5);
+        assert!(n.has_content_selection());
+        assert_eq!(n.selected_text(), "hello");
+        assert_eq!(n.content_selection_range(), Some((0, 5)));
+    }
+
+    #[test]
+    fn test_selection_reversed_anchor() {
+        let mut n = Note {
+            content: "hello world".into(),
+            ..Note::new()
+        };
+        // sel_start can be > sel_end (user selected backwards)
+        n.sel_start = Some(11);
+        n.sel_end = Some(6);
+        assert!(n.has_content_selection());
+        assert_eq!(n.selected_text(), "world");
+        assert_eq!(n.content_selection_range(), Some((6, 11)));
+    }
+
+    #[test]
+    fn test_delete_selected_content() {
+        let mut n = Note {
+            content: "hello world".into(),
+            cursor: 11,
+            ..Note::new()
+        };
+        n.sel_start = Some(0);
+        n.sel_end = Some(6);
+        let deleted = n.delete_selected_content();
+        assert_eq!(deleted, "hello ");
+        assert_eq!(n.content, "world");
+        assert_eq!(n.cursor, 0);
+        assert!(!n.has_content_selection());
+    }
+
+    #[test]
+    fn test_delete_selected_title() {
+        let mut n = Note {
+            title: "my title".into(),
+            title_cursor: 8,
+            ..Note::new()
+        };
+        n.title_sel_start = Some(3);
+        n.title_sel_end = Some(8);
+        let deleted = n.delete_selected_title();
+        assert_eq!(deleted, "title");
+        assert_eq!(n.title, "my ");
+        assert_eq!(n.title_cursor, 3);
+    }
+
+    #[test]
+    fn test_clear_all_selections() {
+        let mut n = Note {
+            content: "abc".into(),
+            title: "def".into(),
+            ..Note::new()
+        };
+        n.sel_start = Some(0);
+        n.sel_end = Some(2);
+        n.title_sel_start = Some(0);
+        n.title_sel_end = Some(2);
+        assert!(n.any_selection());
+        n.clear_all_selections();
+        assert!(!n.any_selection());
     }
 }
