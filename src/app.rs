@@ -7,7 +7,10 @@ use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 
-use crate::note::{self, BORDER_STYLES, NOTE_COLORS, Note, abs_diff_u16, color_name, cycle_str};
+use crate::note::{
+    self, BORDER_STYLES, NOTE_COLORS, Note, abs_diff_u16, char_idx_to_byte, char_len, color_name,
+    cycle_str,
+};
 use crate::persistence::SaveData;
 
 // ── Input modes ───────────────────────────────────────────────────────────────
@@ -496,7 +499,7 @@ impl App {
             }
             _ => {
                 if let Some(c) = ks.chars().next()
-                    && (c.is_ascii_graphic() || c == ' ')
+                    && !c.is_control()
                 {
                     self.input.push(c);
                 }
@@ -521,7 +524,7 @@ impl App {
             }
             _ => {
                 if let Some(c) = ks.chars().next()
-                    && (c.is_ascii_graphic() || c == ' ')
+                    && !c.is_control()
                 {
                     self.input.push(c);
                 }
@@ -572,13 +575,13 @@ impl App {
                     EditFocus::Header => {
                         if !note.title.is_empty() {
                             note.title_sel_start = Some(0);
-                            note.title_sel_end = Some(note.title.len());
+                            note.title_sel_end = Some(char_len(&note.title));
                         }
                     }
                     EditFocus::Content => {
                         if !note.content.is_empty() {
                             note.sel_start = Some(0);
-                            note.sel_end = Some(note.content.len());
+                            note.sel_end = Some(char_len(&note.content));
                         }
                     }
                     _ => {}
@@ -628,7 +631,8 @@ impl App {
                             note.delete_selected_title();
                             self.mark_dirty();
                         } else if note.title_cursor > 0 {
-                            note.title.remove(note.title_cursor - 1);
+                            let byte_pos = char_idx_to_byte(&note.title, note.title_cursor - 1);
+                            note.title.remove(byte_pos);
                             note.title_cursor = note.title_cursor.saturating_sub(1);
                             self.mark_dirty();
                         }
@@ -637,8 +641,9 @@ impl App {
                         if note.has_title_selection() {
                             note.delete_selected_title();
                             self.mark_dirty();
-                        } else if note.title_cursor < note.title.len() {
-                            note.title.remove(note.title_cursor);
+                        } else if note.title_cursor < char_len(&note.title) {
+                            let byte_pos = char_idx_to_byte(&note.title, note.title_cursor);
+                            note.title.remove(byte_pos);
                             self.mark_dirty();
                         }
                     }
@@ -649,7 +654,7 @@ impl App {
                         note.clear_title_selection();
                     }
                     "right" => {
-                        if note.title_cursor < note.title.len() {
+                        if note.title_cursor < char_len(&note.title) {
                             note.title_cursor += 1;
                         }
                         note.clear_title_selection();
@@ -664,7 +669,7 @@ impl App {
                         }
                     }
                     "shift+right" => {
-                        if note.title_cursor < note.title.len() {
+                        if note.title_cursor < char_len(&note.title) {
                             if note.title_sel_start.is_none() {
                                 note.title_sel_start = Some(note.title_cursor);
                             }
@@ -683,25 +688,26 @@ impl App {
                         if note.title_sel_start.is_none() {
                             note.title_sel_start = Some(note.title_cursor);
                         }
-                        note.title_cursor = note.title.len();
-                        note.title_sel_end = Some(note.title.len());
+                        note.title_cursor = char_len(&note.title);
+                        note.title_sel_end = Some(char_len(&note.title));
                     }
                     "home" => {
                         note.title_cursor = 0;
                         note.clear_title_selection();
                     }
                     "end" => {
-                        note.title_cursor = note.title.len();
+                        note.title_cursor = char_len(&note.title);
                         note.clear_title_selection();
                     }
                     _ => {
                         if let Some(c) = ks.chars().next()
-                            && (c.is_ascii_graphic() || c == ' ')
+                            && !c.is_control()
                         {
                             if note.has_title_selection() {
                                 note.delete_selected_title();
                             }
-                            note.title.insert(note.title_cursor, c);
+                            let byte_pos = char_idx_to_byte(&note.title, note.title_cursor);
+                            note.title.insert(byte_pos, c);
                             note.title_cursor += 1;
                             self.mark_dirty();
                         }
@@ -783,7 +789,7 @@ impl App {
                         }
                         _ => {
                             if let Some(c) = ks.chars().next()
-                                && (c.is_ascii_graphic() || c == ' ')
+                                && !c.is_control()
                             {
                                 note.tag_input.push(c);
                                 note.tag_cursor = None; // typing deselects
@@ -803,7 +809,8 @@ impl App {
                         if note.has_content_selection() {
                             note.delete_selected_content();
                         }
-                        note.content.insert(note.cursor, '\n');
+                        let byte_pos = char_idx_to_byte(&note.content, note.cursor);
+                        note.content.insert(byte_pos, '\n');
                         note.cursor += 1;
                         self.mark_dirty();
                     }
@@ -812,7 +819,8 @@ impl App {
                             note.delete_selected_content();
                             self.mark_dirty();
                         } else if note.cursor > 0 {
-                            note.content.remove(note.cursor - 1);
+                            let byte_pos = char_idx_to_byte(&note.content, note.cursor - 1);
+                            note.content.remove(byte_pos);
                             note.cursor = note.cursor.saturating_sub(1);
                             self.mark_dirty();
                         }
@@ -824,7 +832,7 @@ impl App {
                         note.clear_content_selection();
                     }
                     "right" => {
-                        if note.cursor < note.content.len() {
+                        if note.cursor < char_len(&note.content) {
                             note.cursor += 1;
                         }
                         note.clear_content_selection();
@@ -842,18 +850,20 @@ impl App {
                         note.clear_content_selection();
                     }
                     "home" => {
-                        let before = &note.content[..note.cursor];
+                        let byte_pos = char_idx_to_byte(&note.content, note.cursor);
+                        let before = &note.content[..byte_pos];
                         let line_start = before.rfind('\n').map(|i| i + 1).unwrap_or(0);
-                        note.cursor = line_start;
+                        note.cursor = note.content[..line_start].chars().count();
                         note.clear_content_selection();
                     }
                     "end" => {
-                        let after = &note.content[note.cursor..];
+                        let byte_pos = char_idx_to_byte(&note.content, note.cursor);
+                        let after = &note.content[byte_pos..];
                         let line_end = after
                             .find('\n')
-                            .map(|i| note.cursor + i)
+                            .map(|i| byte_pos + i)
                             .unwrap_or(note.content.len());
-                        note.cursor = line_end;
+                        note.cursor = note.content[..line_end].chars().count();
                         note.clear_content_selection();
                     }
                     "shift+left" => {
@@ -866,7 +876,7 @@ impl App {
                         }
                     }
                     "shift+right" => {
-                        if note.cursor < note.content.len() {
+                        if note.cursor < char_len(&note.content) {
                             if note.sel_start.is_none() {
                                 note.sel_start = Some(note.cursor);
                             }
@@ -898,31 +908,34 @@ impl App {
                         if note.sel_start.is_none() {
                             note.sel_start = Some(note.cursor);
                         }
-                        let before = &note.content[..note.cursor];
+                        let byte_pos = char_idx_to_byte(&note.content, note.cursor);
+                        let before = &note.content[..byte_pos];
                         let line_start = before.rfind('\n').map(|i| i + 1).unwrap_or(0);
-                        note.cursor = line_start;
+                        note.cursor = note.content[..line_start].chars().count();
                         note.sel_end = Some(note.cursor);
                     }
                     "shift+end" => {
                         if note.sel_start.is_none() {
                             note.sel_start = Some(note.cursor);
                         }
-                        let after = &note.content[note.cursor..];
+                        let byte_pos = char_idx_to_byte(&note.content, note.cursor);
+                        let after = &note.content[byte_pos..];
                         let line_end = after
                             .find('\n')
-                            .map(|i| note.cursor + i)
+                            .map(|i| byte_pos + i)
                             .unwrap_or(note.content.len());
-                        note.cursor = line_end;
+                        note.cursor = note.content[..line_end].chars().count();
                         note.sel_end = Some(note.cursor);
                     }
                     _ => {
                         if let Some(c) = ks.chars().next()
-                            && (c.is_ascii_graphic() || c == ' ')
+                            && !c.is_control()
                         {
                             if note.has_content_selection() {
                                 note.delete_selected_content();
                             }
-                            note.content.insert(note.cursor, c);
+                            let byte_pos = char_idx_to_byte(&note.content, note.cursor);
+                            note.content.insert(byte_pos, c);
                             note.cursor += 1;
                             self.mark_dirty();
                         }
@@ -1161,8 +1174,8 @@ impl App {
         let note = &mut self.notes[self.selected];
         note.editing = !note.editing;
         if note.editing {
-            note.cursor = note.content.len();
-            note.title_cursor = note.title.len();
+            note.cursor = char_len(&note.content);
+            note.title_cursor = char_len(&note.title);
             note.tag_input.clear();
             note.tag_cursor = None;
             note.clear_all_selections();
@@ -1197,7 +1210,7 @@ impl App {
         if self.show_overlay {
             if self.selected < self.count() {
                 self.notes[self.selected].editing = true;
-                self.notes[self.selected].cursor = self.notes[self.selected].content.len();
+                self.notes[self.selected].cursor = char_len(&self.notes[self.selected].content);
             }
         } else if self.selected < self.count() {
             self.notes[self.selected].editing = false;
@@ -1257,10 +1270,10 @@ impl App {
                 return;
             }
         };
-        // Filter: keep ASCII graphic, space, and newline only.
+        // Allow any non-control Unicode character plus newline.
         let filtered: String = text
             .chars()
-            .filter(|c| c.is_ascii_graphic() || *c == ' ' || *c == '\n')
+            .filter(|c| !c.is_control() || *c == '\n')
             .collect();
         if filtered.is_empty() {
             return;
@@ -1272,7 +1285,8 @@ impl App {
                     note.delete_selected_title();
                 }
                 for c in filtered.chars() {
-                    note.title.insert(note.title_cursor, c);
+                    let byte_pos = char_idx_to_byte(&note.title, note.title_cursor);
+                    note.title.insert(byte_pos, c);
                     note.title_cursor += 1;
                 }
                 self.mark_dirty();
@@ -1282,7 +1296,8 @@ impl App {
                     note.delete_selected_content();
                 }
                 for c in filtered.chars() {
-                    note.content.insert(note.cursor, c);
+                    let byte_pos = char_idx_to_byte(&note.content, note.cursor);
+                    note.content.insert(byte_pos, c);
                     note.cursor += 1;
                 }
                 self.mark_dirty();
@@ -1369,7 +1384,7 @@ impl App {
         if my == header_y {
             // Click in header area.
             let rel_x = mx.saturating_sub(2) as usize;
-            let pos = rel_x.min(note.title.len());
+            let pos = rel_x.min(char_len(&note.title));
             note.title_cursor = pos;
             note.clear_title_selection();
             self.edit_focus = EditFocus::Header;

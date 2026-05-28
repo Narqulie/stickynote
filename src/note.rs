@@ -4,6 +4,17 @@
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 
+/// Convert a char index to a byte index in `s`.
+/// Returns `s.len()` when `char_idx >= s.chars().count()`.
+pub fn char_idx_to_byte(s: &str, char_idx: usize) -> usize {
+    s.chars().take(char_idx).map(|c| c.len_utf8()).sum()
+}
+
+/// Shorthand for `s.chars().count()`.
+pub fn char_len(s: &str) -> usize {
+    s.chars().count()
+}
+
 // ── Themes ────────────────────────────────────────────────────────────────────
 
 /// A colour theme defining the palette for status bars, borders, and hints.
@@ -117,9 +128,10 @@ impl Note {
     /// Split content into lines, inserting a `█` cursor marker when editing.
     pub fn content_lines(&self) -> Vec<String> {
         let display = if self.editing {
-            let pos = self.cursor.min(self.content.len());
+            let char_pos = self.cursor.min(char_len(&self.content));
+            let byte_pos = char_idx_to_byte(&self.content, char_pos);
             let mut s = self.content.clone();
-            s.insert(pos, '█');
+            s.insert(byte_pos, '█');
             s
         } else {
             self.content.clone()
@@ -139,27 +151,29 @@ impl Note {
     }
 
     /// Return the (line_index, column) of the content cursor.
-    /// Both are 0-based; `line_index` counts `\n`-separated lines.
+    /// Both are 0-based char indices; `line_index` counts `\n`-separated lines.
     pub fn cursor_pos(&self) -> (usize, usize) {
-        let pos = self.cursor.min(self.content.len());
-        let before = &self.content[..pos];
+        let char_count = char_len(&self.content);
+        let char_idx = self.cursor.min(char_count);
+        let byte_pos = char_idx_to_byte(&self.content, char_idx);
+        let before = &self.content[..byte_pos];
         let lines_before = before.chars().filter(|&c| c == '\n').count();
         let line_start = before.rfind('\n').map(|i| i + 1).unwrap_or(0);
-        let col = self.cursor - line_start;
+        let col = self.content[line_start..byte_pos].chars().count();
         (lines_before, col)
     }
 
-    /// Convert a (line_index, column) pair back to a flat byte position.
-    /// Column is clamped to the line length.
+    /// Convert a (line_index, column) pair back to a flat char-index cursor position.
+    /// Column is treated as a char offset and clamped to the line's char length.
     pub fn pos_to_cursor(&self, line_idx: usize, col: usize) -> usize {
-        let mut pos = 0usize;
+        let mut char_pos = 0usize;
         for (i, line) in self.content.split('\n').enumerate() {
             if i == line_idx {
-                return pos + col.min(line.len());
+                return char_pos + col.min(char_len(line));
             }
-            pos += line.len() + 1; // +1 for the '\n' separator
+            char_pos += char_len(line) + 1; // +1 for the '\n' separator
         }
-        self.content.len()
+        char_len(&self.content)
     }
 }
 
@@ -206,14 +220,22 @@ impl Note {
     /// The text currently selected in the content body.
     pub fn selected_text(&self) -> String {
         self.content_selection_range()
-            .map(|(s, e)| self.content[s..e].to_string())
+            .map(|(s, e)| {
+                let bs = char_idx_to_byte(&self.content, s);
+                let be = char_idx_to_byte(&self.content, e);
+                self.content[bs..be].to_string()
+            })
             .unwrap_or_default()
     }
 
     /// The text currently selected in the title.
     pub fn selected_title(&self) -> String {
         self.title_selection_range()
-            .map(|(s, e)| self.title[s..e].to_string())
+            .map(|(s, e)| {
+                let bs = char_idx_to_byte(&self.title, s);
+                let be = char_idx_to_byte(&self.title, e);
+                self.title[bs..be].to_string()
+            })
             .unwrap_or_default()
     }
 
@@ -236,8 +258,10 @@ impl Note {
     /// at the deletion point.
     pub fn delete_selected_content(&mut self) -> String {
         if let Some((s, e)) = self.content_selection_range() {
-            let deleted = self.content[s..e].to_string();
-            self.content.drain(s..e);
+            let bs = char_idx_to_byte(&self.content, s);
+            let be = char_idx_to_byte(&self.content, e);
+            let deleted = self.content[bs..be].to_string();
+            self.content.drain(bs..be);
             self.cursor = s;
             self.sel_start = None;
             self.sel_end = None;
@@ -251,8 +275,10 @@ impl Note {
     /// at the deletion point.
     pub fn delete_selected_title(&mut self) -> String {
         if let Some((s, e)) = self.title_selection_range() {
-            let deleted = self.title[s..e].to_string();
-            self.title.drain(s..e);
+            let bs = char_idx_to_byte(&self.title, s);
+            let be = char_idx_to_byte(&self.title, e);
+            let deleted = self.title[bs..be].to_string();
+            self.title.drain(bs..be);
             self.title_cursor = s;
             self.title_sel_start = None;
             self.title_sel_end = None;

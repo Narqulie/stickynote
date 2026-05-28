@@ -7,7 +7,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
 
 use crate::app::{App, EditFocus, MenuAction};
-use crate::note::{Note, THEMES, Theme, color_name, parse_hex, parse_md};
+use crate::note::{
+    Note, THEMES, Theme, char_idx_to_byte, char_len, color_name, parse_hex, parse_md,
+};
 
 // ── Main render entry point ───────────────────────────────────────────────────
 
@@ -124,7 +126,7 @@ fn render_tabs(app: &App, frame: &mut Frame, theme: &Theme, inset_w: u16) {
         let note = &app.notes[note_idx];
         let remaining = inset_w.saturating_sub(x);
         let label = tab_label(note, remaining);
-        let w = label.len() as u16;
+        let w = char_len(&label) as u16;
 
         let is_selected = note_idx == app.selected;
         let note_color = parse_hex(&note.color);
@@ -156,7 +158,7 @@ fn render_tabs(app: &App, frame: &mut Frame, theme: &Theme, inset_w: u16) {
             frame,
             &more,
             Style::new().fg(Color::Rgb(0x88, 0x88, 0x88)),
-            Rect::new(x, 0, more.len() as u16, 1),
+            Rect::new(x, 0, char_len(&more) as u16, 1),
         );
     }
 }
@@ -175,7 +177,7 @@ pub fn note_index_at_tab_x(app: &App, mx: u16) -> Option<usize> {
         let note = &app.notes[note_idx];
         let remaining = inset_w.saturating_sub(x);
         let label = tab_label(note, remaining);
-        let w = label.len() as u16;
+        let w = char_len(&label) as u16;
 
         if mx >= x && mx < x + w {
             return Some(note_idx);
@@ -247,7 +249,7 @@ fn render_full_note(
         } else {
             note.title.clone()
         };
-        let title_len = title_with_cursor.len() as u16;
+        let title_len = char_len(&title_with_cursor) as u16;
         if title_len <= title_width {
             // Center-justified within inner width.
             let pad = (title_width - title_len) / 2;
@@ -267,18 +269,20 @@ fn render_full_note(
                 format!("{}█", tail)
             } else {
                 let max_show = max.saturating_sub(1);
-                format!("{}…", &title_with_cursor[..max_show])
+                let byte_show = char_idx_to_byte(&title_with_cursor, max_show);
+                format!("{}…", &title_with_cursor[..byte_show])
             }
         }
     } else {
         // Fallback: show color + border info.
         let info = format!(" ● {}  [{}]", color_name(&note.color), note.border_style);
-        if info.len() as u16 > title_width {
+        if char_len(&info) as u16 > title_width {
             let max = title_width.saturating_sub(1) as usize;
-            format!("{}…", &info[..max])
+            let byte_max = char_idx_to_byte(&info, max);
+            format!("{}…", &info[..byte_max])
         } else {
             // Center-justified.
-            let pad = (inner_w - info.len() as u16) / 2;
+            let pad = (inner_w - char_len(&info) as u16) / 2;
             format!("{:pad$}{}", "", info, pad = pad as usize)
         }
     };
@@ -384,9 +388,10 @@ fn render_full_note(
         let raw = note.content_lines();
         raw.iter()
             .map(|l| {
-                let display = if l.len() as u16 > content_max_line {
-                    let max_len = content_max_line as usize;
-                    format!("{}…", &l[..max_len])
+                let display = if char_len(l) as u16 > content_max_line {
+                    let max_chars = content_max_line as usize;
+                    let truncated: String = l.chars().take(max_chars).collect();
+                    format!("{}…", truncated)
                 } else {
                     l.clone()
                 };
@@ -843,45 +848,48 @@ fn render_content_with_selection(note: &Note, max_line: u16, base_style: Style) 
     };
     let sel_style = selection_style();
     let mut lines = Vec::new();
-    let mut byte_pos = 0usize;
+    let mut char_pos = 0usize;
 
     for line_str in note.content.split('\n') {
-        let line_start = byte_pos;
-        let line_end = byte_pos + line_str.len();
-        let line_len = line_str.len();
+        let line_chars = char_len(line_str);
+        let line_start = char_pos;
+        let line_end = char_pos + line_chars;
 
-        // Truncate raw line to max_line.
-        let truncated: &str = if line_len as u16 > max_line {
-            &line_str[..max_line as usize]
+        // Truncate line to max_line chars for display.
+        let truncated: String = if line_chars as u16 > max_line {
+            line_str.chars().take(max_line as usize).collect()
         } else {
-            line_str
+            line_str.to_string()
         };
 
         let line = if sel_s < line_end && sel_e > line_start {
             let mut spans: Vec<Span> = Vec::new();
 
-            let local_s = sel_s.saturating_sub(line_start).min(truncated.len());
-            let local_e = sel_e.saturating_sub(line_start).min(truncated.len());
+            let local_s = sel_s.saturating_sub(line_start).min(char_len(&truncated));
+            let local_e = sel_e.saturating_sub(line_start).min(char_len(&truncated));
 
-            if local_s > 0 {
-                spans.extend(parse_md(&truncated[..local_s], base_style));
+            let byte_s = char_idx_to_byte(&truncated, local_s);
+            let byte_e = char_idx_to_byte(&truncated, local_e);
+
+            if byte_s > 0 {
+                spans.extend(parse_md(&truncated[..byte_s], base_style));
             }
-            if local_s < local_e {
+            if byte_s < byte_e {
                 spans.push(Span::styled(
-                    truncated[local_s..local_e].to_string(),
+                    truncated[byte_s..byte_e].to_string(),
                     sel_style,
                 ));
             }
-            if local_e < truncated.len() {
-                spans.extend(parse_md(&truncated[local_e..], base_style));
+            if byte_e < truncated.len() {
+                spans.extend(parse_md(&truncated[byte_e..], base_style));
             }
             Line::from(spans)
         } else {
-            Line::from(parse_md(truncated, base_style))
+            Line::from(parse_md(&truncated, base_style))
         };
 
         lines.push(line);
-        byte_pos = line_end + 1;
+        char_pos = line_end + 1; // +1 for the '\n' separator
     }
 
     lines
@@ -906,14 +914,14 @@ fn render_title_with_selection<'a>(
 
     // Show cursor at the active end (sel_end tracks the moving end).
     let display = raw.to_string();
-    let cursor_idx = note.title_cursor.min(display.len());
+    let cursor_idx = note.title_cursor.min(char_len(&display));
     // Cursor is shown after the selection active end; if cursor has moved past
     // the start, insert marker. Only show cursor at the active end.
     let cursor_shown = note.editing && note.title_cursor == note.title_sel_end.unwrap_or(0);
 
     // Build the display: truncate + center-justify, then split into spans.
-    let title_len = display.len() as u16;
-    let (padded, pad_start) = if title_len <= title_width {
+    let title_len = char_len(&display) as u16;
+    let (padded, pad_start_chars) = if title_len <= title_width {
         let pad = (title_width - title_len) / 2;
         (
             format!("{:pad$}{}", "", display, pad = pad as usize),
@@ -932,33 +940,34 @@ fn render_title_with_selection<'a>(
             (format!("{}█", tail), 0usize)
         } else {
             let max_show = max.saturating_sub(1);
-            (format!("{}…", &display[..max_show]), 0usize)
+            let byte_show = char_idx_to_byte(&display, max_show);
+            (format!("{}…", &display[..byte_show]), 0usize)
         }
     };
 
-    // Map selection range onto padded display.
-    let display_len = padded.len();
-    let sel_start_display = ts + pad_start;
-    let sel_end_display = te + pad_start;
+    // Map selection range onto padded display (char-indices throughout).
+    let padded_chars = char_len(&padded);
+    let sel_start_display = ts + pad_start_chars;
+    let sel_end_display = te + pad_start_chars;
 
     let line_style = Style::new().fg(theme.sel_border);
 
-    if sel_start_display < display_len {
+    if sel_start_display < padded_chars {
         let mut spans: Vec<Span> = Vec::new();
-        if sel_start_display > 0 {
+        let byte_start = char_idx_to_byte(&padded, sel_start_display);
+        if byte_start > 0 {
+            spans.push(Span::styled(padded[..byte_start].to_string(), line_style));
+        }
+        let sel_end = sel_end_display.min(padded_chars);
+        let byte_end = char_idx_to_byte(&padded, sel_end);
+        if byte_start < byte_end {
             spans.push(Span::styled(
-                padded[..sel_start_display].to_string(),
-                line_style,
+                padded[byte_start..byte_end].to_string(),
+                sel_style,
             ));
         }
-        let sel_end = sel_end_display.min(display_len);
-        if sel_start_display < sel_end {
-            let sel_text = &padded[sel_start_display..sel_end];
-            spans.push(Span::styled(sel_text.to_string(), sel_style));
-        }
-        if sel_end < display_len {
-            let remaining = &padded[sel_end..];
-            spans.push(Span::styled(remaining.to_string(), line_style));
+        if byte_end < padded.len() {
+            spans.push(Span::styled(padded[byte_end..].to_string(), line_style));
         }
         Line::from(spans)
     } else {
