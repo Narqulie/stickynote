@@ -11,7 +11,24 @@ cargo clippy                   # zero warnings — no #[allow(...)] without just
 cargo fmt                      # rustfmt defaults, no config
 ```
 
-No tests in `app.rs` or `ui.rs` (immediate-mode rendering requires TTY).
+## Release
+
+```bash
+# 1. Bump version in Cargo.toml
+# 2. Update sha256 in stickynote.rb (create tarball: `gh release create vX.Y.Z --generate-notes`)
+vim Cargo.toml stickynote.rb
+cargo build --release && cargo test && cargo clippy
+git add -A && git commit -m "Bump to vX.Y.Z"
+git tag vX.Y.Z && git push && git push --tags
+# 3. Publish to crates.io
+cargo publish
+# 4. Update formula in tap repo
+cp stickynote.rb /opt/homebrew/Library/Taps/narqulie/homebrew-stickynote/Formula/
+cd /opt/homebrew/Library/Taps/narqulie/homebrew-stickynote
+git add Formula/stickynote.rb && git commit -m "stickynote X.Y.Z" && git push
+```
+
+No CI — all release steps manual.
 
 ## Architecture
 
@@ -42,9 +59,7 @@ No tests in `app.rs` or `ui.rs` (immediate-mode rendering requires TTY).
 - **Autocomplete popup height**: `popup_h = (suggestions.len() + 2).min(max)` — the `+2` accounts for `Block::bordered()` top/bottom. Guard `popup_h >= 3`.
 - **Autocomplete filter**: ALL matching global tags shown (duplicate prevention at Enter-commit). Do not re-add exclusion filter `.filter(|t| !note.has_tag(t))`.
 - **`render_welcome()`** and **`render_menu()`** take `&Theme` and use theme colors (not hardcoded greys).
-- **Selection rendering**: `render_content_with_selection()` splits content at `sel_start`/`sel_end`, renders range with `Style::new().bg(gray).fg(white)`. `render_title_with_selection()` does same for title, accounting for center-justification padding. Cursor shown at active end only.
 - **Mouse drag (`mouse_dragging: bool`)**: On `MouseEventKind::Drag(Left)`, sets `mouse_dragging = true`, initializes `sel_start` if None, and calls `mouse_edit_drag()` to update `sel_end`. On `Up`, resets `mouse_dragging`.
-- **Clipboard**: `arboard = "3"`. `copy_to_clipboard(text)` and `paste_from_clipboard()` are free functions at bottom of `app.rs`. Paste filters to non-control Unicode + newline only.
 
 ### Key Bindings
 
@@ -92,12 +107,7 @@ No tests in `app.rs` or `ui.rs` (immediate-mode rendering requires TTY).
 
 ## Naming & Conventions
 
-- **Types**: `PascalCase` — `SaveData`, `MenuAction`, `EditFocus`, `Theme`
-- **Fns, fields**: `snake_case` — `handle_left_click()`, `last_click_x`, `board_path()`
-- **Consts**: `SCREAMING_SNAKE_CASE` — `NOTE_COLORS`, `BORDER_STYLES`, `THEMES`
-- **Order inside files**: structs → impl blocks → free functions → tests
 - **No `#[derive(Default)]`** — all defaults explicit in `Note::new()` and `App::new()`.
-- **No `use` re-exports** from module root — callers import via `crate::note::parse_md`.
 - **`unwrap()`** tolerated only where failure is impossible (`dirs::home_dir()` in a TUI, `arboard::Clipboard::new()`).
 - **`font_style` field is dead UI code** — stored/loaded from JSON for backward compat, but no UI to change it. Keep field in struct/tests/persistence. All new notes get `"normal"`.
 - **`save_board()`** returns `Result<(), String>`. Errors propagate to `App.save_error` via the auto-save loop and `flush_save()`. Displayed as `⚠ {msg}` in the status bar.
@@ -119,7 +129,6 @@ No tests in `app.rs` or `ui.rs` (immediate-mode rendering requires TTY).
 - **Filtering** uses `visible_note_indices()` returning filtered or full range.
 - **`t:tag` removed from hint bar**: The `t` keybinding still works but was intentionally removed from `App::hint_bar()`. Do not add it back.
 - **Tab bar** (single-line) replaced the old peek stack (2 rows/note). No references to "peek" remain.
-- **Help overlay**: Theme is NOT `_theme` — it's actively used as `theme`.
 - **Paste filtering**: `paste_text()` filters clipboard content to non-control Unicode + newline only.
 - **UTF-8 safety**: All cursor positions (`cursor`, `title_cursor`, `sel_start`, `sel_end`) are **char indices**, not byte offsets. Use `char_idx_to_byte(s, char_idx)` before any byte-level string operation (`insert`, `remove`, `drain`, `str[a..b]`). Use `char_len(s)` instead of `.len()` for bounds checks against cursors. This ensures full Unicode (ÅÄÖ, emoji, CJK) never panics.
 - **Selection overlap**: `^c` in normal mode quits; in edit mode with selection it copies. Priority: edit-mode copy check runs BEFORE the quit path.
