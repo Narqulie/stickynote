@@ -7,28 +7,30 @@ Ratatui + Crossterm sticky notes TUI. Rust edition 2024, single crate (5 Rust so
 ```bash
 cargo build --release          # binary at target/release/stickynote
 cargo test                     # 31 tests (note.rs: 27, persistence.rs: 4)
-cargo clippy                   # zero warnings — no #[allow(...)] without justification
+cargo clippy -- -D warnings    # zero warnings — no #[allow(...)] without justification
 cargo fmt                      # rustfmt defaults, no config
 ```
 
 ## Release
 
-```bash
-# 1. Bump version in Cargo.toml
-# 2. Update sha256 in stickynote.rb (create tarball: `gh release create vX.Y.Z --generate-notes`)
-vim Cargo.toml stickynote.rb
-cargo build --release && cargo test && cargo clippy
-git add -A && git commit -m "Bump to vX.Y.Z"
-git tag vX.Y.Z && git push && git push --tags
-# 3. Publish to crates.io
-cargo publish
-# 4. Update formula in tap repo
-cp stickynote.rb /opt/homebrew/Library/Taps/narqulie/homebrew-stickynote/Formula/
-cd /opt/homebrew/Library/Taps/narqulie/homebrew-stickynote
-git add Formula/stickynote.rb && git commit -m "stickynote X.Y.Z" && git push
-```
+GitHub Actions workflow (`.github/workflows/release.yml`) runs CI checks on every push/PR to main, and auto-publishes when it detects a version bump in `Cargo.toml`:
 
-No CI — all release steps manual.
+1. **CI check** — `cargo build`, `cargo test`, `cargo clippy -- -D warnings`, `cargo fmt --check`
+2. **crates.io** — `cargo publish` 
+3. **GitHub Release** — creates tag + release with auto-generated notes
+4. **Homebrew tap** — updates sha256 in `Narqulie/homebrew-stickynote`
+
+Required repo secrets:
+- `CARGO_REGISTRY_TOKEN` — crates.io API token (generate at https://crates.io/settings/tokens)
+- `HOMEBREW_TAP_PAT` — GitHub PAT with `repo` scope for pushing to Narqulie/homebrew-stickynote
+
+```bash
+# Bump version, commit, push — CI does the rest
+vim Cargo.toml
+cargo build --release && cargo test && cargo clippy && cargo fmt
+git add -A && git commit -m "Bump to vX.Y.Z"
+git push
+```
 
 ## Architecture
 

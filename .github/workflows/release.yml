@@ -1,0 +1,94 @@
+name: CI & Release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - run: cargo build --release
+      - run: cargo test
+      - run: cargo clippy -- -D warnings
+      - run: cargo fmt --check
+
+  release:
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Check version bump
+        id: version
+        run: |
+          CURRENT=$(grep '^version = ' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+          PREV=$(git show HEAD~1:Cargo.toml 2>/dev/null \
+            | grep '^version = ' | sed 's/.*"\(.*\)".*/\1/' || echo "")
+          if [ -n "$PREV" ] && [ "$CURRENT" != "$PREV" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "version=$CURRENT" >> "$GITHUB_OUTPUT"
+            echo "Version bumped: $PREV → $CURRENT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate release notes
+        if: steps.version.outputs.changed == 'true'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="v${VERSION}"
+          PREVIOUS=$(git tag --sort=-version:refname | grep '^v' | head -1)
+          if [ -n "$PREVIOUS" ]; then
+            git log --oneline --no-decorate "${PREVIOUS}..HEAD" > /tmp/release-notes.txt
+          else
+            echo "Initial release" > /tmp/release-notes.txt
+          fi
+
+      - name: Publish to crates.io
+        if: steps.version.outputs.changed == 'true'
+        run: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Create GitHub Release
+        if: steps.version.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v${{ steps.version.outputs.version }}"
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes-file /tmp/release-notes.txt \
+            --target "${{ github.sha }}"
+
+      - name: Update Homebrew tap formula
+        if: steps.version.outputs.changed == 'true'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="v${VERSION}"
+          TARBALL_URL="https://github.com/${{ github.repository }}/archive/refs/tags/${TAG}.tar.gz"
+          SHA256=$(curl -sL "$TARBALL_URL" | shasum -a 256 | cut -d' ' -f1)
+
+          git clone --depth=1 \
+            "https://x-access-token:${{ secrets.HOMEBREW_TAP_PAT }}@github.com/Narqulie/homebrew-stickynote.git" \
+            /tmp/homebrew-stickynote
+
+          cd /tmp/homebrew-stickynote
+          sed -i "s|url \".*\"|url \"${TARBALL_URL}\"|" Formula/stickynote.rb
+          sed -i "s|sha256 \".*\"|sha256 \"${SHA256}\"|" Formula/stickynote.rb
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/stickynote.rb
+          git commit -m "stickynote ${VERSION}"
+          git push
