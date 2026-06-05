@@ -578,11 +578,9 @@ impl App {
                             note.title_sel_end = Some(char_len(&note.title));
                         }
                     }
-                    EditFocus::Content => {
-                        if !note.content.is_empty() {
-                            note.sel_start = Some(0);
-                            note.sel_end = Some(char_len(&note.content));
-                        }
+                    EditFocus::Content if !note.content.is_empty() => {
+                        note.sel_start = Some(0);
+                        note.sel_end = Some(char_len(&note.content));
                     }
                     _ => {}
                 }
@@ -1006,11 +1004,9 @@ impl App {
             }
             MouseEventKind::ScrollUp => self.select_prev(),
             MouseEventKind::ScrollDown => self.select_next(),
-            MouseEventKind::Down(MouseButton::Middle) => {
+            MouseEventKind::Down(MouseButton::Middle) if my == 0 && self.select_tab_at_x(mx) => {
                 // Tab bar click (row 0): select + delete.
-                if my == 0 && self.select_tab_at_x(mx) {
-                    self.delete_selected();
-                }
+                self.delete_selected();
             }
             _ => {}
         }
@@ -1354,12 +1350,10 @@ impl App {
                     }
                 }
             }
-            MouseEventKind::ScrollDown => {
-                if self.selected < self.count() {
-                    let note = &mut self.notes[self.selected];
-                    let (line, col) = note.cursor_pos();
-                    note.cursor = note.pos_to_cursor(line + 1, col);
-                }
+            MouseEventKind::ScrollDown if self.selected < self.count() => {
+                let note = &mut self.notes[self.selected];
+                let (line, col) = note.cursor_pos();
+                note.cursor = note.pos_to_cursor(line + 1, col);
             }
             _ => {}
         }
