@@ -12,6 +12,6 @@ class Stickynote < Formula
   end
 
   test do
-    assert_match "stickynote #{version}", shell_output("#{bin}/stickynote --help")
+    assert_match "stickynote #{version}", shell_output("#{bin}/stickynote --version")
   end
 end

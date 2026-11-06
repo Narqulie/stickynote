@@ -3,6 +3,7 @@
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
+use unicode_segmentation::UnicodeSegmentation;
 
 /// Convert a char index to a byte index in `s`.
 /// Returns `s.len()` when `char_idx >= s.chars().count()`.
@@ -13,6 +14,130 @@ pub fn char_idx_to_byte(s: &str, char_idx: usize) -> usize {
 /// Shorthand for `s.chars().count()`.
 pub fn char_len(s: &str) -> usize {
     s.chars().count()
+}
+
+/// Extended-grapheme boundaries expressed in the editor's character indices.
+fn grapheme_boundaries(text: &str) -> impl Iterator<Item = usize> + '_ {
+    std::iter::once(0).chain(text.graphemes(true).scan(0, |index, cluster| {
+        *index += char_len(cluster);
+        Some(*index)
+    }))
+}
+
+pub fn grapheme_floor(text: &str, cursor: usize) -> usize {
+    grapheme_boundaries(text)
+        .take_while(|&index| index <= cursor)
+        .last()
+        .unwrap_or(0)
+}
+
+pub fn grapheme_ceil(text: &str, cursor: usize) -> usize {
+    grapheme_boundaries(text)
+        .find(|&index| index >= cursor)
+        .unwrap_or_else(|| char_len(text))
+}
+
+pub fn previous_grapheme(text: &str, cursor: usize) -> usize {
+    grapheme_boundaries(text)
+        .take_while(|&index| index < cursor)
+        .last()
+        .unwrap_or(0)
+}
+
+pub fn next_grapheme(text: &str, cursor: usize) -> usize {
+    grapheme_boundaries(text)
+        .find(|&index| index > cursor)
+        .unwrap_or_else(|| char_len(text))
+}
+
+// Word commands use grapheme runs: whitespace, alphanumeric/underscore, or
+// punctuation/emoji. Right consumes a run then whitespace; left skips whitespace
+// then consumes the preceding run. Newlines are whitespace, not hard stops.
+#[derive(PartialEq)]
+enum WordClass {
+    Whitespace,
+    Alphanumeric,
+    Punctuation,
+}
+
+fn word_class(cluster: &str) -> WordClass {
+    if cluster.chars().all(char::is_whitespace) {
+        WordClass::Whitespace
+    } else if cluster.chars().any(|c| c.is_alphanumeric() || c == '_') {
+        WordClass::Alphanumeric
+    } else {
+        WordClass::Punctuation
+    }
+}
+
+pub fn next_word(text: &str, cursor: usize) -> usize {
+    let start = grapheme_floor(text, cursor);
+    let tail = &text[char_idx_to_byte(text, start)..];
+    let mut clusters = tail.graphemes(true).peekable();
+    let mut end = start;
+    if let Some(first) = clusters.peek() {
+        let class = word_class(first);
+        while clusters.peek().is_some_and(|g| word_class(g) == class) {
+            end += char_len(clusters.next().expect("peeked cluster"));
+        }
+    }
+    while clusters
+        .peek()
+        .is_some_and(|g| word_class(g) == WordClass::Whitespace)
+    {
+        end += char_len(clusters.next().expect("peeked cluster"));
+    }
+    end
+}
+
+pub fn previous_word(text: &str, cursor: usize) -> usize {
+    let end = grapheme_ceil(text, cursor);
+    let head = &text[..char_idx_to_byte(text, end)];
+    let mut clusters = head.graphemes(true).rev().peekable();
+    let mut start = end;
+    while clusters
+        .peek()
+        .is_some_and(|g| word_class(g) == WordClass::Whitespace)
+    {
+        start -= char_len(clusters.next().expect("peeked cluster"));
+    }
+    if let Some(first) = clusters.peek() {
+        let class = word_class(first);
+        while clusters.peek().is_some_and(|g| word_class(g) == class) {
+            start -= char_len(clusters.next().expect("peeked cluster"));
+        }
+    }
+    start
+}
+
+/// Backspace for append-only single-line drafts (tags, search, paths).
+pub fn pop_grapheme(text: &mut String) {
+    text.truncate(char_idx_to_byte(
+        text,
+        previous_grapheme(text, char_len(text)),
+    ));
+}
+
+fn delete_at_cursor(text: &mut String, cursor: &mut usize, backward: bool, word: bool) -> bool {
+    let start = if backward {
+        if word {
+            previous_word(text, *cursor)
+        } else {
+            previous_grapheme(text, *cursor)
+        }
+    } else {
+        grapheme_floor(text, *cursor)
+    };
+    let end = if backward {
+        grapheme_ceil(text, *cursor)
+    } else if word {
+        next_word(text, *cursor)
+    } else {
+        next_grapheme(text, *cursor)
+    };
+    text.drain(char_idx_to_byte(text, start)..char_idx_to_byte(text, end));
+    *cursor = grapheme_floor(text, start);
+    start != end
 }
 
 // ── Themes ────────────────────────────────────────────────────────────────────
@@ -69,8 +194,23 @@ pub const BORDER_STYLES: [&str; 5] = ["rounded", "double", "thick", "hidden", "n
 
 // ── Note ──────────────────────────────────────────────────────────────────────
 
-/// A single sticky note with content, styling, tags, and editing state.
-/// Transient fields (`cursor`, `title_cursor`, `tag_input`, `tag_cursor`) are not persisted.
+/// Transient Content offsets in logical lines and terminal cells.
+#[derive(Debug, Clone)]
+pub struct ContentViewport {
+    pub top_line: usize,
+    pub left_cell: usize,
+}
+
+impl ContentViewport {
+    pub fn new() -> Self {
+        Self {
+            top_line: 0,
+            left_cell: 0,
+        }
+    }
+}
+
+/// A sticky note. Editing state, cursors, selections and viewport offsets are not persisted.
 #[derive(Debug, Clone)]
 pub struct Note {
     pub content: String,
@@ -82,19 +222,20 @@ pub struct Note {
     pub border_style: String,
     pub editing: bool,
     pub cursor: usize,
+    pub viewport: ContentViewport,
     /// Inline tag input buffer — transient, not persisted.
     pub tag_input: String,
     /// Selected tag index during tag navigation (None = no tag selected).
     pub tag_cursor: Option<usize>,
 
     // ── Text selection (transient, not persisted) ─────────────────────────
-    /// Content selection anchor byte position.
+    /// Content selection anchor character position.
     pub sel_start: Option<usize>,
-    /// Content selection active end byte position.
+    /// Content selection active end character position.
     pub sel_end: Option<usize>,
-    /// Title selection anchor byte position.
+    /// Title selection anchor character position.
     pub title_sel_start: Option<usize>,
-    /// Title selection active end byte position.
+    /// Title selection active end character position.
     pub title_sel_end: Option<usize>,
 }
 
@@ -111,6 +252,7 @@ impl Note {
             border_style: "rounded".to_string(),
             editing: false,
             cursor: 0,
+            viewport: ContentViewport::new(),
             tag_input: String::new(),
             tag_cursor: None,
             sel_start: None,
@@ -123,20 +265,6 @@ impl Note {
     /// First line of content (everything before the first `\n`).
     pub fn first_line(&self) -> &str {
         self.content.lines().next().unwrap_or("")
-    }
-
-    /// Split content into lines, inserting a `█` cursor marker when editing.
-    pub fn content_lines(&self) -> Vec<String> {
-        let display = if self.editing {
-            let char_pos = self.cursor.min(char_len(&self.content));
-            let byte_pos = char_idx_to_byte(&self.content, char_pos);
-            let mut s = self.content.clone();
-            s.insert(byte_pos, '█');
-            s
-        } else {
-            self.content.clone()
-        };
-        display.lines().map(|l| l.to_string()).collect()
     }
 
     /// Check if the note has a specific tag (case-insensitive).
@@ -196,23 +324,25 @@ impl Note {
         }
     }
 
-    /// True if either content or title has a selection.
-    pub fn any_selection(&self) -> bool {
-        self.has_content_selection() || self.has_title_selection()
-    }
-
-    /// Return `(min, max)` of the content selection, if any.
+    /// Return the selection expanded outward to whole graphemes. Rendering,
+    /// copying and mutation all consume this same character-index range.
     pub fn content_selection_range(&self) -> Option<(usize, usize)> {
         match (self.sel_start, self.sel_end) {
-            (Some(s), Some(e)) if s != e => Some((s.min(e), s.max(e))),
+            (Some(s), Some(e)) if s != e => Some((
+                grapheme_floor(&self.content, s.min(e)),
+                grapheme_ceil(&self.content, s.max(e)),
+            )),
             _ => None,
         }
     }
 
-    /// Return `(min, max)` of the title selection, if any.
+    /// Return the title selection expanded outward to whole graphemes.
     pub fn title_selection_range(&self) -> Option<(usize, usize)> {
         match (self.title_sel_start, self.title_sel_end) {
-            (Some(s), Some(e)) if s != e => Some((s.min(e), s.max(e))),
+            (Some(s), Some(e)) if s != e => Some((
+                grapheme_floor(&self.title, s.min(e)),
+                grapheme_ceil(&self.title, s.max(e)),
+            )),
             _ => None,
         }
     }
@@ -262,13 +392,48 @@ impl Note {
             let be = char_idx_to_byte(&self.content, e);
             let deleted = self.content[bs..be].to_string();
             self.content.drain(bs..be);
-            self.cursor = s;
-            self.sel_start = None;
-            self.sel_end = None;
+            self.cursor = grapheme_floor(&self.content, s);
+            self.clear_content_selection();
             deleted
         } else {
+            self.clear_content_selection();
             String::new()
         }
+    }
+
+    /// Delete the selection or one grapheme/word span; return persisted change.
+    pub fn delete_content(&mut self, backward: bool, word: bool) -> bool {
+        if self.has_content_selection() {
+            !self.delete_selected_content().is_empty()
+        } else {
+            self.clear_content_selection();
+            delete_at_cursor(&mut self.content, &mut self.cursor, backward, word)
+        }
+    }
+
+    /// Header counterpart of `delete_content`, with identical boundary rules.
+    pub fn delete_title(&mut self, backward: bool, word: bool) -> bool {
+        if self.has_title_selection() {
+            !self.delete_selected_title().is_empty()
+        } else {
+            self.clear_title_selection();
+            delete_at_cursor(&mut self.title, &mut self.title_cursor, backward, word)
+        }
+    }
+
+    /// Replace any content selection and insert text at the character cursor.
+    /// Return whether persisted text changed (an identical replacement only moves the caret).
+    pub fn insert_content(&mut self, text: &str) -> bool {
+        let cursor = grapheme_floor(&self.content, self.cursor);
+        let (start, end) = self.content_selection_range().unwrap_or((cursor, cursor));
+        let bytes = char_idx_to_byte(&self.content, start)..char_idx_to_byte(&self.content, end);
+        let changed = self.content[bytes.clone()] != *text;
+        // Replace in one operation: deleting first can join neighbouring clusters
+        // and move a snapped caret away from the original insertion point.
+        self.content.replace_range(bytes, text);
+        self.cursor = grapheme_ceil(&self.content, start + char_len(text));
+        self.clear_content_selection();
+        changed
     }
 
     /// Delete the title selection, return the deleted text, and place the cursor
@@ -279,13 +444,26 @@ impl Note {
             let be = char_idx_to_byte(&self.title, e);
             let deleted = self.title[bs..be].to_string();
             self.title.drain(bs..be);
-            self.title_cursor = s;
-            self.title_sel_start = None;
-            self.title_sel_end = None;
+            self.title_cursor = grapheme_floor(&self.title, s);
+            self.clear_title_selection();
             deleted
         } else {
+            self.clear_title_selection();
             String::new()
         }
+    }
+
+    /// Replace any title selection and insert text at the character cursor.
+    /// Return whether persisted text changed.
+    pub fn insert_title(&mut self, text: &str) -> bool {
+        let cursor = grapheme_floor(&self.title, self.title_cursor);
+        let (start, end) = self.title_selection_range().unwrap_or((cursor, cursor));
+        let bytes = char_idx_to_byte(&self.title, start)..char_idx_to_byte(&self.title, end);
+        let changed = self.title[bytes.clone()] != *text;
+        self.title.replace_range(bytes, text);
+        self.title_cursor = grapheme_ceil(&self.title, start + char_len(text));
+        self.clear_title_selection();
+        changed
     }
 }
 
@@ -476,6 +654,103 @@ mod tests {
     use super::*;
 
     #[test]
+    fn selections_expand_to_clusters_and_mutations_never_leave_an_interior_caret() {
+        let mut note = Note::new();
+        note.content = "Ae\u{301}👩🏽‍💻Z".into();
+        note.title = note.content.clone();
+        note.sel_start = Some(2); // Interior of accent cluster.
+        note.sel_end = Some(4); // Interior of joined emoji.
+        note.title_sel_start = note.sel_end;
+        note.title_sel_end = note.sel_start; // Reverse selection is identical.
+        assert_eq!(note.selected_text(), "e\u{301}👩🏽‍💻");
+        assert_eq!(note.selected_title(), note.selected_text());
+        assert_eq!(note.delete_selected_content(), "e\u{301}👩🏽‍💻");
+        assert_eq!(note.delete_selected_title(), "e\u{301}👩🏽‍💻");
+        assert_eq!(note.content, "AZ");
+        assert_eq!(note.title, "AZ");
+        assert_eq!(note.cursor, 1);
+        assert_eq!(note.title_cursor, 1);
+        // An inserted base joins a following mark; caret must pass the whole cluster.
+        note.content = "\u{301}Z".into();
+        note.cursor = 0;
+        note.insert_content("e");
+        assert_eq!(note.content, "e\u{301}Z");
+        assert_eq!(note.cursor, 2);
+        note.title = "e\u{301}Z".into();
+        note.title_cursor = 1; // A stale/scalar offset is snapped before insertion.
+        note.insert_title("A");
+        assert_eq!(note.title, "Ae\u{301}Z");
+        assert_eq!(note.title_cursor, 1);
+    }
+
+    #[test]
+    fn replacement_keeps_the_original_insertion_point_when_deletion_would_join_clusters() {
+        let mut note = Note::new();
+        note.content = "🇫X🇮".into();
+        note.title = note.content.clone();
+        note.sel_start = Some(1);
+        note.sel_end = Some(2);
+        note.title_sel_start = Some(1);
+        note.title_sel_end = Some(2);
+        assert!(!note.insert_content("X"));
+        assert!(!note.insert_title("X"));
+        assert_eq!(note.content, "🇫X🇮");
+        assert_eq!(note.title, note.content);
+        assert_eq!((note.cursor, note.title_cursor), (2, 2));
+        note.sel_start = Some(1);
+        note.sel_end = Some(2);
+        note.title_sel_start = Some(1);
+        note.title_sel_end = Some(2);
+        assert!(note.insert_content("Y"));
+        assert!(note.insert_title("Y"));
+        assert_eq!(note.content, "🇫Y🇮");
+        assert_eq!(note.title, note.content);
+        note.sel_start = Some(1);
+        note.sel_end = Some(2);
+        note.title_sel_start = Some(1);
+        note.title_sel_end = Some(2);
+        assert!(note.insert_content(""));
+        assert!(note.insert_title(""));
+        assert_eq!(note.content, "🇫🇮");
+        assert_eq!(note.title, note.content);
+        assert_eq!((note.cursor, note.title_cursor), (2, 2));
+    }
+
+    #[test]
+    fn grapheme_and_word_boundaries_cover_empty_interior_and_multiline_text() {
+        let text = "e\u{301}🇫🇮\r\n👩🏽‍💻";
+        let boundaries: Vec<_> = grapheme_boundaries(text).collect();
+        assert_eq!(boundaries, [0, 2, 4, 6, 10]);
+        for pair in boundaries.windows(2) {
+            assert_eq!(next_grapheme(text, pair[0]), pair[1]);
+            assert_eq!(previous_grapheme(text, pair[1]), pair[0]);
+            for index in pair[0] + 1..pair[1] {
+                assert_eq!(grapheme_floor(text, index), pair[0]);
+                assert_eq!(grapheme_ceil(text, index), pair[1]);
+            }
+        }
+        for text in ["", "   \n", "one", "中華", "...👩🏽‍💻"] {
+            assert_eq!(next_word(text, 0), char_len(text));
+            assert_eq!(previous_word(text, char_len(text)), 0);
+        }
+        assert_eq!(next_word("one two", 1), 4);
+        assert_eq!(previous_word("one two", 5), 4);
+        assert_eq!(next_word("a1️⃣🙂x", 0), 4); // Digit keycap stays in the alphanumeric run.
+        assert_eq!(previous_word("a1️⃣🙂x", 4), 0);
+        assert_eq!(next_word("a1️⃣🙂x", 4), 5);
+        let mut note = Note::new();
+        note.content = "e\u{301}Z".into();
+        note.cursor = 1;
+        assert!(note.delete_content(false, false));
+        assert_eq!(note.content, "Z");
+        assert!(!note.delete_content(true, false));
+        note.cursor = 1;
+        assert!(!note.delete_content(false, true));
+        assert!(note.delete_content(true, true));
+        assert_eq!(note.content, "");
+    }
+
+    #[test]
     fn test_note_defaults() {
         let n = Note::new();
         assert_eq!(n.font_style, "normal");
@@ -505,55 +780,6 @@ mod tests {
             ..Note::new()
         };
         assert_eq!(n.first_line(), "");
-    }
-
-    #[test]
-    fn test_content_lines_no_cursor() {
-        let n = Note {
-            content: "hello\nworld".into(),
-            editing: false,
-            ..Note::new()
-        };
-        let lines = n.content_lines();
-        assert_eq!(lines.len(), 2);
-        assert_eq!(lines[0], "hello");
-        assert_eq!(lines[1], "world");
-    }
-
-    #[test]
-    fn test_content_lines_with_cursor() {
-        let n = Note {
-            content: "hello".into(),
-            editing: true,
-            cursor: 3,
-            ..Note::new()
-        };
-        let lines = n.content_lines();
-        assert_eq!(lines[0], "hel█lo");
-    }
-
-    #[test]
-    fn test_content_lines_cursor_at_end() {
-        let n = Note {
-            content: "hi".into(),
-            editing: true,
-            cursor: 2,
-            ..Note::new()
-        };
-        let lines = n.content_lines();
-        assert_eq!(lines[0], "hi█");
-    }
-
-    #[test]
-    fn test_content_lines_cursor_past_end() {
-        let n = Note {
-            content: "ab".into(),
-            editing: true,
-            cursor: 100,
-            ..Note::new()
-        };
-        let lines = n.content_lines();
-        assert_eq!(lines[0], "ab█");
     }
 
     #[test]
@@ -682,7 +908,6 @@ mod tests {
         let n = Note::new();
         assert!(!n.has_content_selection());
         assert!(!n.has_title_selection());
-        assert!(!n.any_selection());
         assert_eq!(n.selected_text(), "");
         assert_eq!(n.selected_title(), "");
     }
@@ -756,8 +981,8 @@ mod tests {
         n.sel_end = Some(2);
         n.title_sel_start = Some(0);
         n.title_sel_end = Some(2);
-        assert!(n.any_selection());
+        assert!(n.has_content_selection() && n.has_title_selection());
         n.clear_all_selections();
-        assert!(!n.any_selection());
+        assert!(!n.has_content_selection() && !n.has_title_selection());
     }
 }
